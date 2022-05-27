@@ -1,0 +1,20 @@
+﻿version: "2.4"
+
+services:
+  receiver:
+    build: .
+    container_name: buildbot.vigem.org-receiver
+    volumes:
+      - ./data/htdocs:/data:rw
+      - ./appsettings.json:/app/appsettings.json:ro
+    networks:
+      - web
+    ports:
+      - "1614:7089"
+    restart: unless-stopped
+    labels:
+      - traefik.enable=false
+
+networks:
+  web:
+    external: true
