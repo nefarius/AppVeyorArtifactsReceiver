@@ -2,6 +2,10 @@
 
 Web service listening for deployment webhook calls from AppVeyor CI/CD.
 
+## About
+
+This little project spawns a webhook web server you can point an AppVeyor deployment at to mirror new artifacts to the local file system.
+
 ## How to set up
 
 - Log into AppVeyor and [create a new deployment](https://ci.appveyor.com/environments/new) with the `Webhook` provider
