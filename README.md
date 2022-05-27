@@ -5,7 +5,7 @@ Web service listening for deployment webhook calls from AppVeyor CI/CD.
 ## How to set up
 
 - Log into AppVeyor and [create a new deployment](https://ci.appveyor.com/environments/new) with the `Webhook` provider
-- Specify the URL to wherever you're hosting the service (e.G. `https://ci.example.org/webhooks/7b544703-bdd0-4420-9b96-18208076d4df`)
+- Specify the URL to wherever you're hosting the service (e.g. `https://ci.example.org/webhooks/7b544703-bdd0-4420-9b96-18208076d4df`)
   - **Important:** use a new, auto-generated GUID here and keep it secret!
 - Adjust the `Webhooks` section in `appsettings.json` to fit your environment (don't forget to put your GUID there as well)
 
