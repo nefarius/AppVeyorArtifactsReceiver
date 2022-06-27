@@ -38,6 +38,8 @@ public class WebhooksEndpoint : Endpoint<Root>
 
         var subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
         
+        await SendOkAsync(ct);
+
         _logger.LogInformation("Build sub-directory {Directory}", subDirectory);
 
         Directory.CreateDirectory(Path.Combine(hookCfg.RootDirectory, subDirectory));
@@ -59,8 +61,6 @@ public class WebhooksEndpoint : Endpoint<Root>
 
             await stream.CopyToAsync(file, ct);
         }
-
-        await SendOkAsync(ct);
     }
 
     private static string Replace(string input, IReadOnlyDictionary<string, string> replacement)
