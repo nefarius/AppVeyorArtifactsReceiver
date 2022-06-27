@@ -7,6 +7,7 @@ services:
     volumes:
       - ./data/htdocs:/data:rw
       - ./appsettings.json:/app/appsettings.json:ro
+      - ./data/logs:/app/logs:rw
     networks:
       - web
     ports:
