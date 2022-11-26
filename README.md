@@ -29,4 +29,4 @@ deploy:
 
 ## 3rd party credits
 
-- [FastEndpoints](https://github.com/dj-nitehawk/FastEndpoints)
+- [FastEndpoints](https://github.com/FastEndpoints/FastEndpoints)
