@@ -2,7 +2,7 @@
 
 # AppVeyor Artifacts Receiver
 
-![GitHub Workflow Status](https://img.shields.io/github/workflow/status/nefarius/AppVeyorArtifactsReceiver/Docker%20Image%20CI)
+![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/nefarius/AppVeyorArtifactsReceiver/docker-image.yml)
 
 Web service listening for deployment webhook calls from [AppVeyor](https://www.appveyor.com/) CI/CD.
 
