@@ -1,21 +1,21 @@
 global using FastEndpoints;
-using AppVeyorArtifactsReceiver;
-using Serilog;
 
-var builder = WebApplication.CreateBuilder();
+using AppVeyorArtifactsReceiver;
+
+using Serilog;
+using Serilog.Core;
+
+WebApplicationBuilder builder = WebApplication.CreateBuilder();
 builder.Services.AddFastEndpoints();
 builder.Services.AddHttpClient();
 
-var config = new ConfigurationBuilder()
-    .SetBasePath(AppDomain.CurrentDomain.BaseDirectory)
-    .AddJsonFile("appsettings.json").Build();
 
-builder.Services.Configure<ServiceConfig>(config.GetSection(nameof(ServiceConfig)));
+builder.Services.Configure<ServiceConfig>(builder.Configuration.GetSection(nameof(ServiceConfig)));
 
 #region Logging
 
-var logger = new LoggerConfiguration()
-    .ReadFrom.Configuration(config)
+Logger logger = new LoggerConfiguration()
+    .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
     .CreateLogger();
 
@@ -34,7 +34,9 @@ builder.Services.AddSingleton(new LoggerFactory().AddSerilog(logger));
 
 #endregion
 
-var app = builder.Build();
+WebApplication app = builder.Build();
+
 app.UseAuthorization();
 app.UseFastEndpoints();
+
 app.Run();

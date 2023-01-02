@@ -1,17 +1,18 @@
 ﻿using System.Text.RegularExpressions;
+
 using Microsoft.Extensions.Options;
 
 namespace AppVeyorArtifactsReceiver;
 
 public class WebhooksEndpoint : Endpoint<Root>
 {
-    private readonly IOptions<ServiceConfig> _serviceConfig;
-
     private readonly IHttpClientFactory _httpClientFactory;
 
     private readonly ILogger<WebhooksEndpoint> _logger;
+    private readonly IOptions<ServiceConfig> _serviceConfig;
 
-    public WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, IHttpClientFactory httpClientFactory, ILogger<WebhooksEndpoint> logger)
+    public WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, IHttpClientFactory httpClientFactory,
+        ILogger<WebhooksEndpoint> logger)
     {
         _serviceConfig = serviceConfig;
         _httpClientFactory = httpClientFactory;
@@ -20,8 +21,7 @@ public class WebhooksEndpoint : Endpoint<Root>
 
     public override void Configure()
     {
-        Verbs(Http.POST);
-        Routes("/webhooks/{Id}");
+        Post("/webhooks/{Id}");
         AllowAnonymous();
     }
 
@@ -33,31 +33,31 @@ public class WebhooksEndpoint : Endpoint<Root>
             return;
         }
 
-        var hookCfg = _serviceConfig.Value.Webhooks
+        TargetSettings hookCfg = _serviceConfig.Value.Webhooks
             .First(kvp => Equals(Guid.Parse(kvp.Key), req.Id)).Value;
 
-        var subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
-        
+        string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
+
         await SendOkAsync(ct);
 
         _logger.LogInformation("Build sub-directory {Directory}", subDirectory);
 
         Directory.CreateDirectory(Path.Combine(hookCfg.RootDirectory, subDirectory));
 
-        foreach (var artifact in req.Artifacts)
+        foreach (Artifact artifact in req.Artifacts)
         {
-            var absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
+            string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
 
             _logger.LogInformation("Absolute path for artifact {Artifact}: {Path}",
                 artifact.Name, subDirectory);
 
             Directory.CreateDirectory(Path.GetDirectoryName(absolutePath));
 
-            using var httpClient = _httpClientFactory.CreateClient();
+            using HttpClient httpClient = _httpClientFactory.CreateClient();
 
-            var stream = await httpClient.GetStreamAsync(artifact.Url, ct);
+            Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
-            await using var file = File.Create(absolutePath);
+            await using FileStream file = File.Create(absolutePath);
 
             await stream.CopyToAsync(file, ct);
         }
@@ -65,14 +65,16 @@ public class WebhooksEndpoint : Endpoint<Root>
 
     private static string Replace(string input, IReadOnlyDictionary<string, string> replacement)
     {
-        var regex = new Regex("{(?<placeholder>[a-z_][a-z0-9_]*?)}",
+        Regex regex = new Regex("{(?<placeholder>[a-z_][a-z0-9_]*?)}",
             RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
         return regex.Replace(input, m =>
         {
-            var key = m.Groups["placeholder"].Value;
-            if (replacement.TryGetValue(key, out var value))
+            string key = m.Groups["placeholder"].Value;
+            if (replacement.TryGetValue(key, out string value))
+            {
                 return value;
+            }
 
             throw new Exception($"Unknown key {key}");
         });

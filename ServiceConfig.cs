@@ -1,6 +1,10 @@
-﻿namespace AppVeyorArtifactsReceiver;
+﻿using System.Diagnostics.CodeAnalysis;
 
-public class TargetSettings
+namespace AppVeyorArtifactsReceiver;
+
+[SuppressMessage("ReSharper", "ClassNeverInstantiated.Global")]
+[SuppressMessage("ReSharper", "UnusedAutoPropertyAccessor.Global")]
+public sealed class TargetSettings
 {
     /// <summary>
     ///     The sub-directory to put the artifact in. Supports all AppVeyor environment variables as substitutes for
@@ -14,6 +18,7 @@ public class TargetSettings
     public string RootDirectory { get; set; }
 }
 
+[SuppressMessage("ReSharper", "CollectionNeverUpdated.Global")]
 public class ServiceConfig
 {
     /// <summary>
