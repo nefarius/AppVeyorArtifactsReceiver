@@ -6,7 +6,7 @@ services:
     container_name: buildbot.vigem.org-receiver
     volumes:
       - ./data/htdocs:/data:rw
-      - ./appsettings.json:/app/appsettings.json:ro
+      - ./appsettings.Production.json:/app/appsettings.Production.json:ro
       - ./data/logs:/app/logs:rw
     networks:
       - web
