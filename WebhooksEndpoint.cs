@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace AppVeyorArtifactsReceiver;
 
-public class WebhooksEndpoint : Endpoint<Root>
+public partial class WebhooksEndpoint : Endpoint<Root>
 {
     private readonly IHttpClientFactory _httpClientFactory;
 
@@ -63,12 +63,12 @@ public class WebhooksEndpoint : Endpoint<Root>
         }
     }
 
+    [GeneratedRegex("{(?<placeholder>[a-z_][a-z0-9_]*?)}", RegexOptions.IgnoreCase, "en-US")]
+    private static partial Regex PlaceholdersRegex();
+
     private static string Replace(string input, IReadOnlyDictionary<string, string> replacement)
     {
-        Regex regex = new Regex("{(?<placeholder>[a-z_][a-z0-9_]*?)}",
-            RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
-        return regex.Replace(input, m =>
+        return PlaceholdersRegex().Replace(input, m =>
         {
             string key = m.Groups["placeholder"].Value;
             if (replacement.TryGetValue(key, out string value))
