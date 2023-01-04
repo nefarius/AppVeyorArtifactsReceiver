@@ -51,7 +51,7 @@ public partial class WebhooksEndpoint : Endpoint<Root>
             _logger.LogInformation("Absolute path for artifact {Artifact}: {Path}",
                 artifact.Name, subDirectory);
 
-            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath));
+            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
             using HttpClient httpClient = _httpClientFactory.CreateClient();
 
