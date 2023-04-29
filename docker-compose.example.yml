@@ -3,7 +3,6 @@
 services:
   receiver:
     build: .
-    container_name: buildbot.vigem.org-receiver
     volumes:
       - ./data/htdocs:/data:rw
       - ./appsettings.Production.json:/app/appsettings.Production.json:ro
