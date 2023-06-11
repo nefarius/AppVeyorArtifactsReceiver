@@ -5,6 +5,7 @@ namespace AppVeyorArtifactsReceiver;
 
 [SuppressMessage("ReSharper", "ClassNeverInstantiated.Global")]
 [SuppressMessage("ReSharper", "UnusedMember.Global")]
+[SuppressMessage("ReSharper", "UnusedAutoPropertyAccessor.Global")]
 public sealed class Artifact
 {
     [JsonPropertyName("fileName")]
@@ -24,7 +25,9 @@ public sealed class Artifact
 }
 
 [SuppressMessage("ReSharper", "UnusedMember.Global")]
-public class Root
+[SuppressMessage("ReSharper", "ClassNeverInstantiated.Global")]
+[SuppressMessage("ReSharper", "UnusedAutoPropertyAccessor.Global")]
+public sealed class WebhookRequest
 {
     [QueryParam]
     [JsonPropertyName("id")]

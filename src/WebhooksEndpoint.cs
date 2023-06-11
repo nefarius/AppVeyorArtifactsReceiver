@@ -4,7 +4,7 @@ using Microsoft.Extensions.Options;
 
 namespace AppVeyorArtifactsReceiver;
 
-public partial class WebhooksEndpoint : Endpoint<Root>
+public partial class WebhooksEndpoint : Endpoint<WebhookRequest>
 {
     private readonly IHttpClientFactory _httpClientFactory;
 
@@ -25,7 +25,7 @@ public partial class WebhooksEndpoint : Endpoint<Root>
         AllowAnonymous();
     }
 
-    public override async Task HandleAsync(Root req, CancellationToken ct)
+    public override async Task HandleAsync(WebhookRequest req, CancellationToken ct)
     {
         if (!_serviceConfig.Value.Webhooks.Any(kvp => Equals(Guid.Parse(kvp.Key), req.Id)))
         {
@@ -48,7 +48,7 @@ public partial class WebhooksEndpoint : Endpoint<Root>
         {
             string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
 
-            _logger.LogInformation("Absolute path for artifact {Artifact}: {Path}",
+            _logger.LogInformation("Absolute path for artifact {@Artifact}: {Path}",
                 artifact.Name, subDirectory);
 
             Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
