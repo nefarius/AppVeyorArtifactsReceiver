@@ -48,8 +48,8 @@ public partial class WebhooksEndpoint : Endpoint<WebhookRequest>
         {
             string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
 
-            _logger.LogInformation("Absolute path for artifact {@Artifact}: {Path}",
-                artifact, subDirectory);
+            _logger.LogInformation("Absolute path for artifact {FileName}: {Path}",
+                artifact.FileName, subDirectory);
 
             Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
