@@ -28,7 +28,7 @@ internal sealed class WebhooksEndpoint : Endpoint<WebhookRequest>
             return;
         }
 
-        await PublishAsync(req, cancellation: ct);
+        await PublishAsync(req, Mode.WaitForNone, ct);
         await SendOkAsync(ct);
     }
 }
