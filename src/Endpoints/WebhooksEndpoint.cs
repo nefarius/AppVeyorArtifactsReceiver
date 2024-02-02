@@ -1,8 +1,11 @@
 ﻿using System.Text.RegularExpressions;
 
+using AppVeyorArtifactsReceiver.Configuration;
+using AppVeyorArtifactsReceiver.Models;
+
 using Microsoft.Extensions.Options;
 
-namespace AppVeyorArtifactsReceiver;
+namespace AppVeyorArtifactsReceiver.Endpoints;
 
 public partial class WebhooksEndpoint : Endpoint<WebhookRequest>
 {

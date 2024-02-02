@@ -1,6 +1,7 @@
 global using FastEndpoints;
 
 using AppVeyorArtifactsReceiver;
+using AppVeyorArtifactsReceiver.Configuration;
 
 using Nefarius.Utilities.AspNetCore;
 
