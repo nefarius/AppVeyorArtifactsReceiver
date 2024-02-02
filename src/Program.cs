@@ -7,6 +7,7 @@ using Nefarius.Utilities.AspNetCore;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder().Setup();
 
+builder.Services.AddAuthorization();
 builder.Services.AddFastEndpoints();
 builder.Services.AddHttpClient();
 
