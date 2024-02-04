@@ -30,3 +30,4 @@ deploy:
 ## 3rd party credits
 
 - [FastEndpoints](https://github.com/FastEndpoints/FastEndpoints)
+- [Nefarius.Utilities.AspNetCore](https://github.com/nefarius/Nefarius.Utilities.AspNetCore)
