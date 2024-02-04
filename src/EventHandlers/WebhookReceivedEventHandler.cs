@@ -41,7 +41,7 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
             Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
-            using HttpClient httpClient = _httpClientFactory.CreateClient();
+            HttpClient httpClient = _httpClientFactory.CreateClient();
 
             Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
