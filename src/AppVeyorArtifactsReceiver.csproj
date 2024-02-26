@@ -13,7 +13,7 @@
   <ItemGroup>
     <PackageReference Include="FastEndpoints" Version="5.22.0" />
     <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.19.6" />
-    <PackageReference Include="Nefarius.Utilities.AspNetCore" Version="2.2.0" />
+    <PackageReference Include="Nefarius.Utilities.AspNetCore" Version="2.2.2" />
     <PackageReference Include="Serilog.AspNetCore" Version="8.0.1" />
   </ItemGroup>
 
