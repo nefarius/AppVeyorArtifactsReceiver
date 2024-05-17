@@ -42,7 +42,7 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
             Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
-            HttpClient httpClient = _httpClientFactory.CreateClient();
+            HttpClient httpClient = _httpClientFactory.CreateClient("AppVeyor");
 
             Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
@@ -56,8 +56,20 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
             string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
             string absoluteSymlinkPath = Path.Combine(hookCfg.RootDirectory, latestSubDirectory);
 
-            FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
-            _logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+            try
+            {
+                if (File.Exists(absoluteSymlinkPath))
+                {
+                    File.Delete(absoluteSymlinkPath);
+                }
+
+                FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
+                _logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to create symbolic link");
+            }
         }
     }
 
