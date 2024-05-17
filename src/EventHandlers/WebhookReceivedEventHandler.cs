@@ -58,9 +58,9 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
             try
             {
-                if (File.Exists(absoluteSymlinkPath))
+                if (Directory.Exists(absoluteSymlinkPath))
                 {
-                    File.Delete(absoluteSymlinkPath);
+                    Directory.Delete(absoluteSymlinkPath);
                 }
 
                 FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
