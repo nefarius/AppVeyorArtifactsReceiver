@@ -1,4 +1,5 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿#nullable enable
+using System.Diagnostics.CodeAnalysis;
 
 namespace AppVeyorArtifactsReceiver.Configuration;
 
@@ -10,12 +11,18 @@ public sealed class TargetSettings
     ///     The sub-directory to put the artifact in. Supports all AppVeyor environment variables as substitutes for
     ///     placeholders.
     /// </summary>
-    public string TargetPathTemplate { get; set; }
+    public required string TargetPathTemplate { get; set; }
+
+    /// <summary>
+    ///     The sub-directory to put the symbolic link to the latest build in. Supports all AppVeyor environment variables as
+    ///     substitutes for placeholders.
+    /// </summary>
+    public string? LatestSymlinkTemplate { get; set; }
 
     /// <summary>
     ///     The download/wwwroot directory.
     /// </summary>
-    public string RootDirectory { get; set; }
+    public required string RootDirectory { get; set; }
 }
 
 [SuppressMessage("ReSharper", "CollectionNeverUpdated.Global")]

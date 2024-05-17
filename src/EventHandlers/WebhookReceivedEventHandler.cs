@@ -30,13 +30,14 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
         _logger.LogInformation("Build sub-directory {Directory}", subDirectory);
 
-        Directory.CreateDirectory(Path.Combine(hookCfg.RootDirectory, subDirectory));
+        string absoluteTargetPath = Path.Combine(hookCfg.RootDirectory, subDirectory);
+        Directory.CreateDirectory(absoluteTargetPath);
 
         foreach (Artifact artifact in req.Artifacts)
         {
             string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
 
-            _logger.LogInformation("Absolute path for artifact {FileName}: {Path}",
+            _logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
                 artifact.FileName, subDirectory);
 
             Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
@@ -48,6 +49,15 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
             await using FileStream file = File.Create(absolutePath);
 
             await stream.CopyToAsync(file, ct);
+        }
+
+        if (!string.IsNullOrEmpty(hookCfg.TargetPathTemplate))
+        {
+            string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
+            string absoluteSymlinkPath = Path.Combine(hookCfg.RootDirectory, latestSubDirectory);
+
+            FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
+            _logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
         }
     }
 
