@@ -65,6 +65,11 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
                 FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
                 _logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+
+                string timestampFileAbsolutePath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.txt");
+                await using StreamWriter tsFile = File.CreateText(timestampFileAbsolutePath);
+                await tsFile.WriteAsync(DateTime.UtcNow.ToString("O"));
+                tsFile.Close();
             }
             catch (Exception ex)
             {
