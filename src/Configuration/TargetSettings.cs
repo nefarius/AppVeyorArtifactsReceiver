@@ -23,4 +23,9 @@ public sealed class TargetSettings
     ///     The download/wwwroot directory.
     /// </summary>
     public required string RootDirectory { get; set; }
+
+    /// <summary>
+    ///     Gets whether automatic ".artifact-name.exe.json" metadata files should be generated. 
+    /// </summary>
+    public bool StoreMetaData { get; set; } = true;
 }

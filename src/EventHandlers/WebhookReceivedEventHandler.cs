@@ -1,9 +1,13 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Text.Json;
+using System.Text.RegularExpressions;
 
 using AppVeyorArtifactsReceiver.Configuration;
 using AppVeyorArtifactsReceiver.Models;
 
 using Microsoft.Extensions.Options;
+
+using PeNet;
+using PeNet.Header.Resource;
 
 namespace AppVeyorArtifactsReceiver.EventHandlers;
 
@@ -41,18 +45,54 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
         {
             string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
 
-            _logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
-                artifact.FileName, subDirectory);
+            try
+            {
+                _logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
+                    artifact.FileName, subDirectory);
 
-            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+                Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
-            using HttpClient httpClient = _httpClientFactory.CreateClient("AppVeyor");
+                using HttpClient httpClient = _httpClientFactory.CreateClient("AppVeyor");
 
-            await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
+                await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
-            await using FileStream file = File.Create(absolutePath);
+                await using FileStream file = File.Create(absolutePath);
 
-            await stream.CopyToAsync(file, ct);
+                await stream.CopyToAsync(file, ct);
+
+                if (hookCfg.StoreMetaData)
+                {
+                    try
+                    {
+                        // attempt to put PE metadata into separate JSON file for automated use
+                        file.Position = 0;
+                        PeFile peFile = new(file);
+
+                        if (peFile.Resources?.VsVersionInfo != null)
+                        {
+                            StringTable stringTable =
+                                peFile.Resources.VsVersionInfo!.StringFileInfo.StringTable.First();
+
+                            string metaDirectory = Path.GetDirectoryName(absolutePath);
+                            string metaFileName = Path.GetFileName(absolutePath);
+
+                            string metaAbsolutePath = Path.Combine(metaDirectory!, $".{metaFileName}.json");
+
+                            await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(stringTable), ct);
+
+                            _logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to PE-parse file {File}", absolutePath);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
+            }
         }
 
         // updates the "latest" special directory symlink with the most up-to-date target
