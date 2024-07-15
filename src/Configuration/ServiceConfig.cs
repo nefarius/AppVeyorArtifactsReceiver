@@ -8,13 +8,13 @@ namespace AppVeyorArtifactsReceiver.Configuration;
 public sealed class TargetSettings
 {
     /// <summary>
-    ///     The sub-directory to put the artifact in. Supports all AppVeyor environment variables as substitutes for
+    ///     The subdirectory to put the artifact in. Supports all AppVeyor environment variables as substitutes for
     ///     placeholders.
     /// </summary>
     public required string TargetPathTemplate { get; set; }
 
     /// <summary>
-    ///     The sub-directory to put the symbolic link to the latest build in. Supports all AppVeyor environment variables as
+    ///     The subdirectory to put the symbolic link to the latest build in. Supports all AppVeyor environment variables as
     ///     substitutes for placeholders.
     /// </summary>
     public string? LatestSymlinkTemplate { get; set; }

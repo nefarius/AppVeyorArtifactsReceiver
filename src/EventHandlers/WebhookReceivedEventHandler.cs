@@ -7,6 +7,9 @@ using Microsoft.Extensions.Options;
 
 namespace AppVeyorArtifactsReceiver.EventHandlers;
 
+/// <summary>
+///     Service that processes received artifacts and stores them on disk.
+/// </summary>
 internal sealed partial class WebhookReceivedEventHandler : IEventHandler<WebhookRequest>
 {
     private readonly IHttpClientFactory _httpClientFactory;
@@ -33,6 +36,7 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
         string absoluteTargetPath = Path.Combine(hookCfg.RootDirectory, subDirectory);
         Directory.CreateDirectory(absoluteTargetPath);
 
+        // each job can have multiple artifacts
         foreach (Artifact artifact in req.Artifacts)
         {
             string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
@@ -42,15 +46,16 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
             Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
-            HttpClient httpClient = _httpClientFactory.CreateClient("AppVeyor");
+            using HttpClient httpClient = _httpClientFactory.CreateClient("AppVeyor");
 
-            Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
+            await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
             await using FileStream file = File.Create(absolutePath);
 
             await stream.CopyToAsync(file, ct);
         }
 
+        // updates the "latest" special directory symlink with the most up-to-date target
         if (!string.IsNullOrEmpty(hookCfg.TargetPathTemplate))
         {
             string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
@@ -81,6 +86,9 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
     [GeneratedRegex("{(?<placeholder>[a-z_][a-z0-9_]*?)}", RegexOptions.IgnoreCase, "en-US")]
     private static partial Regex PlaceholdersRegex();
 
+    /// <summary>
+    ///     Replaces placeholder tokens (like {appveyor_project_name}) with the variable content of the payload.
+    /// </summary>
     private static string Replace(string input, IReadOnlyDictionary<string, string> replacement)
     {
         return PlaceholdersRegex().Replace(input, m =>

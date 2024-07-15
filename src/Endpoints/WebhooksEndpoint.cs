@@ -5,6 +5,9 @@ using Microsoft.Extensions.Options;
 
 namespace AppVeyorArtifactsReceiver.Endpoints;
 
+/// <summary>
+///     Endpoint listening for incoming webhook requests.
+/// </summary>
 internal sealed class WebhooksEndpoint : Endpoint<WebhookRequest>
 {
     private readonly IOptions<ServiceConfig> _serviceConfig;
