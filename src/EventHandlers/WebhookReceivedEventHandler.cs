@@ -71,6 +71,7 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
                 FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
                 _logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
 
+                // create/update a file with the last updated timestamp in it for other APIs (or users) to use 
                 string timestampFileAbsolutePath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.txt");
                 await using StreamWriter tsFile = File.CreateText(timestampFileAbsolutePath);
                 await tsFile.WriteAsync(DateTime.UtcNow.ToString("O"));
