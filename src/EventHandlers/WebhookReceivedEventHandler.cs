@@ -77,8 +77,9 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
                             string metaFileName = Path.GetFileName(absolutePath);
 
                             string metaAbsolutePath = Path.Combine(metaDirectory!, $".{metaFileName}.json");
+                            ArtifactMetaData meta = new(stringTable.FileVersion, stringTable.ProductVersion);
 
-                            await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(stringTable), ct);
+                            await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(meta), ct);
 
                             _logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
                         }
