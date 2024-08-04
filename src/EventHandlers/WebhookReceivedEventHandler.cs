@@ -18,10 +18,10 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<WebhookReceivedEventHandler> _logger;
-    private readonly IOptions<ServiceConfig> _serviceConfig;
+    private readonly IOptionsSnapshot<ServiceConfig> _serviceConfig;
 
     public WebhookReceivedEventHandler(ILogger<WebhookReceivedEventHandler> logger,
-        IOptions<ServiceConfig> serviceConfig, IHttpClientFactory httpClientFactory)
+        IOptionsSnapshot<ServiceConfig> serviceConfig, IHttpClientFactory httpClientFactory)
     {
         _logger = logger;
         _serviceConfig = serviceConfig;
