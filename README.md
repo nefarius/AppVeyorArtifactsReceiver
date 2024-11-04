@@ -1,6 +1,4 @@
-<img src="assets/NSS-128x128.png" align="right" />
-
-# AppVeyor Artifacts Receiver
+# <img src="assets/NSS-128x128.png" align="left" />AppVeyor Artifacts Receiver
 
 ![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/nefarius/AppVeyorArtifactsReceiver/docker-image.yml)
 
