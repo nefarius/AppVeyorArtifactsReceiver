@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 using AppVeyorArtifactsReceiver.Configuration;
@@ -14,6 +15,7 @@ namespace AppVeyorArtifactsReceiver.EventHandlers;
 /// <summary>
 ///     Service that processes received artifacts and stores them on disk.
 /// </summary>
+[SuppressMessage("ReSharper", "InconsistentNaming")]
 internal sealed partial class WebhookReceivedEventHandler : IEventHandler<WebhookRequest>
 {
     private readonly IHttpClientFactory _httpClientFactory;
@@ -60,7 +62,7 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
                 await stream.CopyToAsync(file, ct);
 
-                if (hookCfg.StoreMetaData)
+                if (IsPEFile(file) && hookCfg.StoreMetaData)
                 {
                     try
                     {
@@ -122,6 +124,32 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
             {
                 _logger.LogError(ex, "Failed to create symbolic link");
             }
+        }
+    }
+
+    private static bool IsPEFile(FileStream stream)
+    {
+        try
+        {
+            stream.Seek(0, SeekOrigin.Begin);
+            using BinaryReader reader = new BinaryReader(stream);
+            // Check for the "MZ" magic number at the start of the file
+            if (reader.ReadUInt16() != 0x5A4D) // "MZ" in hex
+            {
+                return false;
+            }
+
+            // Move to the PE header offset location
+            stream.Seek(0x3C, SeekOrigin.Begin);
+            int peHeaderOffset = reader.ReadInt32();
+
+            // Move to the PE header and check for the "PE\0\0" signature
+            stream.Seek(peHeaderOffset, SeekOrigin.Begin);
+            return reader.ReadUInt32() == 0x00004550; // "PE\0\0" in hex
+        }
+        catch
+        {
+            return false;
         }
     }
 
