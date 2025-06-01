@@ -3,7 +3,6 @@ global using FastEndpoints;
 using System.Net.Http.Headers;
 using System.Reflection;
 
-using AppVeyorArtifactsReceiver;
 using AppVeyorArtifactsReceiver.Configuration;
 
 using Nefarius.Utilities.AspNetCore;
