@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -132,7 +133,7 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
         try
         {
             stream.Seek(0, SeekOrigin.Begin);
-            using BinaryReader reader = new BinaryReader(stream);
+            using BinaryReader reader = new(stream, Encoding.UTF8, true);
             // Check for the "MZ" magic number at the start of the file
             if (reader.ReadUInt16() != 0x5A4D) // "MZ" in hex
             {
