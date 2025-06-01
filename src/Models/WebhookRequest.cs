@@ -8,7 +8,7 @@ namespace AppVeyorArtifactsReceiver.Models;
 [SuppressMessage("ReSharper", "UnusedAutoPropertyAccessor.Global")]
 public sealed class WebhookRequest
 {
-    [QueryParam]
+    [RouteParam]
     [JsonPropertyName("id")]
     public Guid Id { get; set; }
 
