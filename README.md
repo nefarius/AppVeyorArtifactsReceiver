@@ -1,7 +1,7 @@
 # <img src="assets/NSS-128x128.png" align="left" />AppVeyor Artifacts Receiver
 
 ![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/nefarius/AppVeyorArtifactsReceiver/docker-image.yml)
-[Requirements](https://img.shields.io/badge/Requires-.NET%209-blue.svg)
+![Requirements](https://img.shields.io/badge/Requires-.NET%209-blue.svg)
 
 Web service listening for deployment webhook calls from [AppVeyor](https://www.appveyor.com/) CI/CD.
 
