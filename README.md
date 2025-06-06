@@ -9,6 +9,13 @@ Web service listening for deployment webhook calls from [AppVeyor](https://www.a
 This little project spawns a webhook web server you can point an AppVeyor deployment at to mirror new artifacts to the
 local file system.
 
+## Features
+
+- Mirroring build artifacts to custom infrastructure to circumvent the one month retention policy.
+- The server initiates the download of the build job artifacts, so the deployment step finishes fast with success. With other deployment methods, network hiccups can often cause the deployment to fail and needs manual intervention or retries.
+- A `latest` subdirectory symlink can be auto-generated to provide a fixed URL to the latest build artifacts.
+- Executable metadata like Win32 version resource information is extracted and placed into a hidden `.MyApp.exe.json` file for e.g. auto-updaters to consume and check if newer builds are available.
+
 ## How to set up
 
 - Log into AppVeyor and [create a new deployment](https://ci.appveyor.com/environments/new) with the `Webhook` provider
