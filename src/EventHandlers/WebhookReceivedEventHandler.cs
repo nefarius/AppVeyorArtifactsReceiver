@@ -58,7 +58,7 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                 await stream.CopyToAsync(file, ct);
 
-                if (IsPEFile(file) && hookCfg.StoreMetaData)
+                if (hookCfg.StoreMetaData && IsPEFile(file))
                 {
                     try
                     {
