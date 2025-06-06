@@ -40,3 +40,6 @@ deploy:
 
 - [FastEndpoints](https://github.com/FastEndpoints/FastEndpoints)
 - [Nefarius.Utilities.AspNetCore](https://github.com/nefarius/Nefarius.Utilities.AspNetCore)
+- [Polly](https://github.com/App-vNext/Polly)
+- [PeNet](https://github.com/secana/PeNet)
+- [Serilog](https://serilog.net/)
