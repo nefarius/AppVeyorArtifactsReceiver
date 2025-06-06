@@ -20,28 +20,20 @@ namespace AppVeyorArtifactsReceiver.EventHandlers;
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 [UsedImplicitly]
-internal sealed partial class WebhookReceivedEventHandler : IEventHandler<WebhookRequest>
+internal sealed partial class WebhookReceivedEventHandler(
+    ILogger<WebhookReceivedEventHandler> logger,
+    IOptionsSnapshot<ServiceConfig> serviceConfig,
+    IHttpClientFactory httpClientFactory)
+    : IEventHandler<WebhookRequest>
 {
-    private readonly IHttpClientFactory _httpClientFactory;
-    private readonly ILogger<WebhookReceivedEventHandler> _logger;
-    private readonly IOptionsSnapshot<ServiceConfig> _serviceConfig;
-
-    public WebhookReceivedEventHandler(ILogger<WebhookReceivedEventHandler> logger,
-        IOptionsSnapshot<ServiceConfig> serviceConfig, IHttpClientFactory httpClientFactory)
-    {
-        _logger = logger;
-        _serviceConfig = serviceConfig;
-        _httpClientFactory = httpClientFactory;
-    }
-
     public async Task HandleAsync(WebhookRequest req, CancellationToken ct)
     {
-        TargetSettings hookCfg = _serviceConfig.Value.Webhooks
+        TargetSettings hookCfg = serviceConfig.Value.Webhooks
             .First(kvp => Equals(Guid.Parse(kvp.Key), req.Id)).Value;
 
         string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
 
-        _logger.LogInformation("Build sub-directory {Directory}", subDirectory);
+        logger.LogInformation("Build sub-directory {Directory}", subDirectory);
 
         string absoluteTargetPath = Path.Combine(hookCfg.RootDirectory, subDirectory);
         Directory.CreateDirectory(absoluteTargetPath);
@@ -53,12 +45,12 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
             try
             {
-                _logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
+                logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
                     artifact.FileName, subDirectory);
 
                 Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
 
-                using HttpClient httpClient = _httpClientFactory.CreateClient("AppVeyor");
+                using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
 
                 await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
@@ -87,18 +79,18 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
 
                             await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(meta), ct);
 
-                            _logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
+                            logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
                         }
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to PE-parse file {File}", absolutePath);
+                        logger.LogWarning(ex, "Failed to PE-parse file {File}", absolutePath);
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
+                logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
             }
         }
 
@@ -116,7 +108,7 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
                 }
 
                 FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
-                _logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+                logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
 
                 // create/update a file with the last updated timestamp in it for other APIs (or users) to use 
                 string timestampFileAbsolutePath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.txt");
@@ -126,7 +118,7 @@ internal sealed partial class WebhookReceivedEventHandler : IEventHandler<Webhoo
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to create symbolic link");
+                logger.LogError(ex, "Failed to create symbolic link");
             }
         }
     }

@@ -8,15 +8,8 @@ namespace AppVeyorArtifactsReceiver.Endpoints;
 /// <summary>
 ///     Endpoint listening for incoming webhook requests.
 /// </summary>
-internal sealed class WebhooksEndpoint : Endpoint<WebhookRequest>
+internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig) : Endpoint<WebhookRequest>
 {
-    private readonly IOptions<ServiceConfig> _serviceConfig;
-
-    public WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig)
-    {
-        _serviceConfig = serviceConfig;
-    }
-
     public override void Configure()
     {
         Post("/webhooks/{Id}");
@@ -25,7 +18,7 @@ internal sealed class WebhooksEndpoint : Endpoint<WebhookRequest>
 
     public override async Task HandleAsync(WebhookRequest req, CancellationToken ct)
     {
-        if (!_serviceConfig.Value.Webhooks.Any(kvp => Equals(Guid.Parse(kvp.Key), req.Id)))
+        if (!serviceConfig.Value.Webhooks.Any(kvp => Equals(Guid.Parse(kvp.Key), req.Id)))
         {
             await SendNotFoundAsync(ct);
             return;
