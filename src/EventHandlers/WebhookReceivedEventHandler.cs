@@ -6,6 +6,8 @@ using System.Text.RegularExpressions;
 using AppVeyorArtifactsReceiver.Configuration;
 using AppVeyorArtifactsReceiver.Models;
 
+using JetBrains.Annotations;
+
 using Microsoft.Extensions.Options;
 
 using PeNet;
@@ -17,6 +19,7 @@ namespace AppVeyorArtifactsReceiver.EventHandlers;
 ///     Service that processes received artifacts and stores them on disk.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
+[UsedImplicitly]
 internal sealed partial class WebhookReceivedEventHandler : IEventHandler<WebhookRequest>
 {
     private readonly IHttpClientFactory _httpClientFactory;
