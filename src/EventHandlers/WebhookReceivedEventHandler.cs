@@ -34,101 +34,108 @@ internal sealed partial class WebhookReceivedEventHandler(
         logger.LogDebug("Target settings: {@TargetSettings}", hookCfg);
         logger.LogDebug("Request: {@WebhookRequest}", req);
 
-        string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
-
-        logger.LogInformation("Build sub-directory {Directory}", subDirectory);
-
-        string absoluteTargetPath = Path.Combine(hookCfg.RootDirectory, subDirectory);
-        Directory.CreateDirectory(absoluteTargetPath);
-
-        if (req.Artifacts.Count == 0)
+        try
         {
-            logger.LogWarning("No artifacts found for build {BuildId}", req.BuildId);
-            return;
-        }
+            string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
 
-        // each job can have multiple artifacts
-        foreach (Artifact artifact in req.Artifacts)
-        {
-            string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
+            logger.LogInformation("Build sub-directory {Directory}", subDirectory);
 
-            try
+            string absoluteTargetPath = Path.Combine(hookCfg.RootDirectory, subDirectory);
+            Directory.CreateDirectory(absoluteTargetPath);
+
+            if (req.Artifacts.Count == 0)
             {
-                logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
-                    artifact.FileName, subDirectory);
+                logger.LogWarning("No artifacts found for build {BuildId}", req.BuildId);
+                return;
+            }
 
-                Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+            // each job can have multiple artifacts
+            foreach (Artifact artifact in req.Artifacts)
+            {
+                string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
 
-                using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
-
-                await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
-
-                await using FileStream file = File.Create(absolutePath);
-
-                await stream.CopyToAsync(file, ct);
-
-                if (hookCfg.StoreMetaData && IsPEFile(file))
+                try
                 {
-                    try
+                    logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
+                        artifact.FileName, subDirectory);
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+
+                    using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
+
+                    await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
+
+                    await using FileStream file = File.Create(absolutePath);
+
+                    await stream.CopyToAsync(file, ct);
+
+                    if (hookCfg.StoreMetaData && IsPEFile(file))
                     {
-                        // attempt to put PE metadata into separate JSON file for automated use
-                        file.Position = 0;
-                        PeFile peFile = new(file);
-
-                        if (peFile.Resources?.VsVersionInfo != null)
+                        try
                         {
-                            StringTable stringTable =
-                                peFile.Resources.VsVersionInfo!.StringFileInfo.StringTable.First();
+                            // attempt to put PE metadata into separate JSON file for automated use
+                            file.Position = 0;
+                            PeFile peFile = new(file);
 
-                            string metaDirectory = Path.GetDirectoryName(absolutePath);
-                            string metaFileName = Path.GetFileName(absolutePath);
+                            if (peFile.Resources?.VsVersionInfo != null)
+                            {
+                                StringTable stringTable =
+                                    peFile.Resources.VsVersionInfo!.StringFileInfo.StringTable.First();
 
-                            string metaAbsolutePath = Path.Combine(metaDirectory!, $".{metaFileName}.json");
-                            ArtifactMetaData meta = new(stringTable.FileVersion, stringTable.ProductVersion);
+                                string metaDirectory = Path.GetDirectoryName(absolutePath);
+                                string metaFileName = Path.GetFileName(absolutePath);
 
-                            await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(meta), ct);
+                                string metaAbsolutePath = Path.Combine(metaDirectory!, $".{metaFileName}.json");
+                                ArtifactMetaData meta = new(stringTable.FileVersion, stringTable.ProductVersion);
 
-                            logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
+                                await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(meta), ct);
+
+                                logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, "Failed to PE-parse file {File}", absolutePath);
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex, "Failed to PE-parse file {File}", absolutePath);
-                    }
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
                 }
             }
-            catch (Exception ex)
+
+            // updates the "latest" special directory symlink with the most up-to-date target
+            if (!string.IsNullOrEmpty(hookCfg.TargetPathTemplate))
             {
-                logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
+                string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
+                string absoluteSymlinkPath = Path.Combine(hookCfg.RootDirectory, latestSubDirectory);
+
+                try
+                {
+                    if (Directory.Exists(absoluteSymlinkPath))
+                    {
+                        Directory.Delete(absoluteSymlinkPath);
+                    }
+
+                    FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
+                    logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+
+                    // create/update a file with the last updated timestamp in it for other APIs (or users) to use 
+                    string timestampFileAbsolutePath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.txt");
+                    await using StreamWriter tsFile = File.CreateText(timestampFileAbsolutePath);
+                    await tsFile.WriteAsync(DateTime.UtcNow.ToString("O"));
+                    tsFile.Close();
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to create symbolic link");
+                }
             }
         }
-
-        // updates the "latest" special directory symlink with the most up-to-date target
-        if (!string.IsNullOrEmpty(hookCfg.TargetPathTemplate))
+        catch (Exception ex)
         {
-            string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
-            string absoluteSymlinkPath = Path.Combine(hookCfg.RootDirectory, latestSubDirectory);
-
-            try
-            {
-                if (Directory.Exists(absoluteSymlinkPath))
-                {
-                    Directory.Delete(absoluteSymlinkPath);
-                }
-
-                FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
-                logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
-
-                // create/update a file with the last updated timestamp in it for other APIs (or users) to use 
-                string timestampFileAbsolutePath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.txt");
-                await using StreamWriter tsFile = File.CreateText(timestampFileAbsolutePath);
-                await tsFile.WriteAsync(DateTime.UtcNow.ToString("O"));
-                tsFile.Close();
-            }
-            catch (Exception ex)
-            {
-                logger.LogError(ex, "Failed to create symbolic link");
-            }
+            logger.LogError(ex, "Failed to process webhook request");
         }
     }
 
