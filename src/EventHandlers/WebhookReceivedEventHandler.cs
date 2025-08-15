@@ -31,12 +31,21 @@ internal sealed partial class WebhookReceivedEventHandler(
         TargetSettings hookCfg = serviceConfig.Value.Webhooks
             .First(kvp => Equals(Guid.Parse(kvp.Key), req.Id)).Value;
 
+        logger.LogDebug("Target settings: {@TargetSettings}", hookCfg);
+        logger.LogDebug("Request: {@WebhookRequest}", req);
+
         string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
 
         logger.LogInformation("Build sub-directory {Directory}", subDirectory);
 
         string absoluteTargetPath = Path.Combine(hookCfg.RootDirectory, subDirectory);
         Directory.CreateDirectory(absoluteTargetPath);
+
+        if (req.Artifacts.Count == 0)
+        {
+            logger.LogWarning("No artifacts found for build {BuildId}", req.BuildId);
+            return;
+        }
 
         // each job can have multiple artifacts
         foreach (Artifact artifact in req.Artifacts)

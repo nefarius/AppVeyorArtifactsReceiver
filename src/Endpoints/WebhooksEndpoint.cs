@@ -27,6 +27,6 @@ internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, IL
         }
 
         await PublishAsync(req, Mode.WaitForNone, ct);
-        await Send.OkAsync(ct);
+        await Send.OkAsync("OK", ct);
     }
 }
