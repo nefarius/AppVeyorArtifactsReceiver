@@ -10,6 +10,14 @@ Web service listening for deployment webhook calls from [AppVeyor](https://www.a
 This little project spawns a webhook web server you can point an AppVeyor deployment at to mirror new artifacts to the
 local file system.
 
+<!-- 
+
+Docker build:
+
+docker build --push -t containinger/avar:dev .
+
+-->
+
 ## Features
 
 - Mirroring build artifacts to custom infrastructure to circumvent the one month retention policy.

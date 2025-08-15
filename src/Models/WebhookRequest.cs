@@ -1,6 +1,8 @@
 ﻿using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 
+using JetBrains.Annotations;
+
 namespace AppVeyorArtifactsReceiver.Models;
 
 [SuppressMessage("ReSharper", "UnusedMember.Global")]
@@ -68,4 +70,8 @@ public sealed class WebhookRequest
 
     [JsonPropertyName("environmentVariables")]
     public Dictionary<string, string> EnvironmentVariables { get; set; }
+
+    [JsonIgnore]
+    [CanBeNull]
+    public string GitHubToken { get; set; }
 }

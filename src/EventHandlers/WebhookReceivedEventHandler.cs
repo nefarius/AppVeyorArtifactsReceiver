@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics.CodeAnalysis;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -33,7 +34,7 @@ internal sealed partial class WebhookReceivedEventHandler(
 
         logger.LogDebug("Target settings: {@TargetSettings}", hookCfg);
         logger.LogDebug("Request: {@WebhookRequest}", req);
-
+        
         try
         {
             string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
@@ -63,6 +64,13 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                     using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
 
+                    // GitHub artifacts accessed via REST API require token auth
+                    if (!string.IsNullOrEmpty(req.GitHubToken))
+                    {
+                        httpClient.DefaultRequestHeaders.Authorization =
+                            new AuthenticationHeaderValue("Bearer", req.GitHubToken);
+                    }
+
                     await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
                     await using FileStream file = File.Create(absolutePath);
@@ -73,7 +81,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                     {
                         try
                         {
-                            // attempt to put PE metadata into separate JSON file for automated use
+                            // attempt to put PE metadata into a separate JSON file for automated use
                             file.Position = 0;
                             PeFile peFile = new(file);
 
