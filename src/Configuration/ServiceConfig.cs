@@ -9,5 +9,5 @@ public sealed class ServiceConfig
     /// <summary>
     ///     The configured accepted webhooks.
     /// </summary>
-    public Dictionary<string, TargetSettings> Webhooks { get; set; } = new();
+    public Dictionary<string /* Webhook GUID */, TargetSettings> Webhooks { get; init; } = new();
 }
