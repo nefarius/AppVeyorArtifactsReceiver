@@ -28,13 +28,16 @@ internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, IL
             return;
         }
 
+        var waitMode = Mode.WaitForNone;
+
         // solves the rate limit on artifact download URLs coming from GitHub actions
         if (HttpContext.Request.Headers.TryGetValue("X-GitHub-Token", out StringValues githubToken))
         {
             req.GitHubToken = githubToken;
+            waitMode = Mode.WaitForAll;
         }
 
-        await PublishAsync(req, Mode.WaitForNone, ct);
+        await PublishAsync(req, waitMode, ct);
         await Send.OkAsync("OK", ct);
     }
 }
