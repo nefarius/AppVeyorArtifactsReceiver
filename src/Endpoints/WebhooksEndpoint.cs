@@ -34,6 +34,7 @@ internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, IL
         if (HttpContext.Request.Headers.TryGetValue("X-GitHub-Token", out StringValues githubToken))
         {
             req.GitHubToken = githubToken;
+            // postpone token expiration until we're done downloading
             waitMode = Mode.WaitForAll;
         }
 
