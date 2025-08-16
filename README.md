@@ -54,7 +54,7 @@ With some trickery, the same server can be fed from GitHub actions as well!
 
 #### Single build artifact
 
-WIP
+Example GitHub Action Job (only supports one artifact):
 
 ```yml
 name: Build and Upload to Buildbot
