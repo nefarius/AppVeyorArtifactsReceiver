@@ -140,3 +140,4 @@ jobs:
 - [Polly](https://github.com/App-vNext/Polly)
 - [PeNet](https://github.com/secana/PeNet)
 - [Serilog](https://serilog.net/)
+- [Serilog.Enrichers.Sensitive](https://github.com/serilog-contrib/Serilog.Enrichers.Sensitive)
