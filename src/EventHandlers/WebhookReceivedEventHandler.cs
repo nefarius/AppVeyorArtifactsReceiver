@@ -79,32 +79,7 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                     if (hookCfg.StoreMetaData && IsPEFile(file))
                     {
-                        try
-                        {
-                            // attempt to put PE metadata into a separate JSON file for automated use
-                            file.Position = 0;
-                            PeFile peFile = new(file);
-
-                            if (peFile.Resources?.VsVersionInfo != null)
-                            {
-                                StringTable stringTable =
-                                    peFile.Resources.VsVersionInfo!.StringFileInfo.StringTable.First();
-
-                                string metaDirectory = Path.GetDirectoryName(absolutePath);
-                                string metaFileName = Path.GetFileName(absolutePath);
-
-                                string metaAbsolutePath = Path.Combine(metaDirectory!, $".{metaFileName}.json");
-                                ArtifactMetaData meta = new(stringTable.FileVersion, stringTable.ProductVersion);
-
-                                await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(meta), ct);
-
-                                logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            logger.LogWarning(ex, "Failed to PE-parse file {File}", absolutePath);
-                        }
+                        await ExtractPEMetaData(file, absolutePath, ct);
                     }
                 }
                 catch (Exception ex)
@@ -147,6 +122,36 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
     }
 
+    private async Task ExtractPEMetaData(FileStream file, string absolutePath, CancellationToken ct = default)
+    {
+        try
+        {
+            // attempt to put PE metadata into a separate JSON file for automated use
+            file.Position = 0;
+            PeFile peFile = new(file);
+
+            if (peFile.Resources?.VsVersionInfo != null)
+            {
+                StringTable stringTable =
+                    peFile.Resources.VsVersionInfo!.StringFileInfo.StringTable.First();
+
+                string metaDirectory = Path.GetDirectoryName(absolutePath);
+                string metaFileName = Path.GetFileName(absolutePath);
+
+                string metaAbsolutePath = Path.Combine(metaDirectory!, $".{metaFileName}.json");
+                ArtifactMetaData meta = new(stringTable.FileVersion, stringTable.ProductVersion);
+
+                await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(meta), ct);
+
+                logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to PE-parse file {File}", absolutePath);
+        }
+    }
+
     private static bool IsPEFile(FileStream stream)
     {
         try
@@ -179,17 +184,14 @@ internal sealed partial class WebhookReceivedEventHandler(
     /// <summary>
     ///     Replaces placeholder tokens (like {appveyor_project_name}) with the variable content of the payload.
     /// </summary>
-    private static string Replace(string input, IReadOnlyDictionary<string, string> replacement)
+    private static string Replace(string input, Dictionary<string, string> replacement)
     {
         return PlaceholdersRegex().Replace(input, m =>
         {
             string key = m.Groups["placeholder"].Value;
-            if (replacement.TryGetValue(key, out string value))
-            {
-                return value;
-            }
-
-            throw new Exception($"Unknown key {key}");
+            return replacement.TryGetValue(key, out string value)
+                ? value 
+                : throw new Exception($"Unknown key {key}");
         });
     }
 }
