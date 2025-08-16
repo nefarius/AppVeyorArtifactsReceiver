@@ -34,7 +34,7 @@ internal sealed partial class WebhookReceivedEventHandler(
 
         logger.LogDebug("Target settings: {@TargetSettings}", hookCfg);
         logger.LogDebug("Request: {@WebhookRequest}", req);
-        
+
         try
         {
             string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);

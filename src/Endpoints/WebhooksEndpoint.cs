@@ -2,13 +2,15 @@
 using AppVeyorArtifactsReceiver.Models;
 
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Primitives;
 
 namespace AppVeyorArtifactsReceiver.Endpoints;
 
 /// <summary>
 ///     Endpoint listening for incoming webhook requests.
 /// </summary>
-internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, ILogger<WebhooksEndpoint> logger) : Endpoint<WebhookRequest>
+internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, ILogger<WebhooksEndpoint> logger)
+    : Endpoint<WebhookRequest>
 {
     public override void Configure()
     {
@@ -19,7 +21,7 @@ internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, IL
     public override async Task HandleAsync(WebhookRequest req, CancellationToken ct)
     {
         logger.LogDebug("Received webhook request for {Id}", req.Id);
-        
+
         if (!serviceConfig.Value.Webhooks.Any(kvp => Equals(Guid.Parse(kvp.Key), req.Id)))
         {
             await Send.NotFoundAsync(ct);
@@ -27,7 +29,7 @@ internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, IL
         }
 
         // solves the rate limit on artifact download URLs coming from GitHub actions
-        if (HttpContext.Request.Headers.TryGetValue("X-GitHub-Token", out var githubToken))
+        if (HttpContext.Request.Headers.TryGetValue("X-GitHub-Token", out StringValues githubToken))
         {
             req.GitHubToken = githubToken;
         }

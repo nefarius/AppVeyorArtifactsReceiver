@@ -4,13 +4,25 @@ using System.Net.Http.Headers;
 using System.Reflection;
 
 using AppVeyorArtifactsReceiver.Configuration;
+using AppVeyorArtifactsReceiver.Models;
 
 using Nefarius.Utilities.AspNetCore;
 
 using Polly;
 using Polly.Contrib.WaitAndRetry;
 
-WebApplicationBuilder builder = WebApplication.CreateBuilder().Setup();
+using Serilog.Enrichers.Sensitive;
+
+WebApplicationBuilder builder = WebApplication.CreateBuilder().Setup(options =>
+{
+    options.Serilog.Configuration.Enrich.WithSensitiveDataMasking(enricherOptions =>
+    {
+        enricherOptions.MaskProperties.Add(new MaskProperty
+        {
+            Name = nameof(WebhookRequest.GitHubToken), Options = MaskOptions.Default
+        });
+    });
+});
 
 builder.Services.AddAuthorization();
 builder.Services.AddFastEndpoints();

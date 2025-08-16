@@ -25,7 +25,7 @@ public sealed class TargetSettings
     public required string RootDirectory { get; set; }
 
     /// <summary>
-    ///     Gets whether automatic ".artifact-name.exe.json" metadata files should be generated. 
+    ///     Gets whether automatic ".artifact-name.exe.json" metadata files should be generated.
     /// </summary>
     public bool StoreMetaData { get; set; } = true;
 }
