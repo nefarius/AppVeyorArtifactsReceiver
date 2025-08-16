@@ -28,6 +28,7 @@ internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, IL
             return;
         }
 
+        // AppVeyor webhook calls have a low timeout, so we report success ASAP and process later
         Mode waitMode = Mode.WaitForNone;
 
         // solves the rate limit on artifact download URLs coming from GitHub actions
