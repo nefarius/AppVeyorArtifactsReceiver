@@ -135,9 +135,9 @@ jobs:
 
 ## 3rd party credits
 
-- [FastEndpoints](https://github.com/FastEndpoints/FastEndpoints)
-- [Nefarius.Utilities.AspNetCore](https://github.com/nefarius/Nefarius.Utilities.AspNetCore)
 - [Polly](https://github.com/App-vNext/Polly)
 - [PeNet](https://github.com/secana/PeNet)
 - [Serilog](https://serilog.net/)
+- [FastEndpoints](https://github.com/FastEndpoints/FastEndpoints)
 - [Serilog.Enrichers.Sensitive](https://github.com/serilog-contrib/Serilog.Enrichers.Sensitive)
+- [Nefarius.Utilities.AspNetCore](https://github.com/nefarius/Nefarius.Utilities.AspNetCore)
