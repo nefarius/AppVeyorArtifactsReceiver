@@ -14,6 +14,8 @@ This project hosts a webhook server that you can point an AppVeyor deployment to
 - **Artifact mirroring** — Store build artifacts on your own infrastructure to circumvent the one-month retention policy.
 - **Fast deployment completion** — The server initiates artifact downloads asynchronously, so the deployment step finishes quickly and successfully. With other methods, network hiccups often cause deployments to fail and require manual retries.
 - **Latest symlink** — A `latest` subdirectory symlink can be auto-generated to provide a fixed URL for the most recent build artifacts.
+- **Latest timestamp file** — `LAST_UPDATED_AT.txt` is written with the ISO 8601 timestamp when each deployment completes, for APIs or scripts to consume.
+- **SVG badge** — `LAST_UPDATED_AT.svg` is generated as a human-readable badge showing the last update time, suitable for embedding in web pages or README files.
 - **Executable metadata** — Win32 version resource information is extracted from executables and written to hidden `.{filename}.json` files (e.g. `.MyApp.exe.json`) for auto-updaters and other tools to consume.
 
 ## Quick Start
