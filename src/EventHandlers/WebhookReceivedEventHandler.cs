@@ -103,16 +103,19 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                     FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
                     logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
-
-                    // create/update a file with the last updated timestamp in it for other APIs (or users) to use 
-                    string timestampFileAbsolutePath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.txt");
-                    await using StreamWriter tsFile = File.CreateText(timestampFileAbsolutePath);
-                    await tsFile.WriteAsync(DateTime.UtcNow.ToString("O"));
-                    tsFile.Close();
                 }
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Failed to create symbolic link");
+                }
+
+                try
+                {
+                    await CreateTimestampFile(absoluteTargetPath);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Failed to create timestamp file");
                 }
             }
         }
@@ -120,6 +123,15 @@ internal sealed partial class WebhookReceivedEventHandler(
         {
             logger.LogError(ex, "Failed to process webhook request");
         }
+    }
+
+    private static async Task CreateTimestampFile(string absoluteTargetPath)
+    {
+        // create/update a file with the last updated timestamp in it for other APIs (or users) to use 
+        string timestampFileAbsolutePath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.txt");
+        await using StreamWriter tsFile = File.CreateText(timestampFileAbsolutePath);
+        await tsFile.WriteAsync(DateTime.UtcNow.ToString("O"));
+        tsFile.Close();
     }
 
     private async Task ExtractPEMetaData(FileStream file, string absolutePath, CancellationToken ct = default)
@@ -190,7 +202,7 @@ internal sealed partial class WebhookReceivedEventHandler(
         {
             string key = m.Groups["placeholder"].Value;
             return replacement.TryGetValue(key, out string value)
-                ? value 
+                ? value
                 : throw new Exception($"Unknown key {key}");
         });
     }
