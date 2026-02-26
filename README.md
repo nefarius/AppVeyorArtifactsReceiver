@@ -1,44 +1,47 @@
-# <img src="assets/NSS-128x128.png" align="left" />AppVeyor Artifacts Receiver
+# <img src="assets/NSS-128x128.png" align="left" /> AppVeyor Artifacts Receiver
 
 [![Docker Image CI](https://github.com/nefarius/AppVeyorArtifactsReceiver/actions/workflows/docker-image.yml/badge.svg)](https://github.com/nefarius/AppVeyorArtifactsReceiver/actions/workflows/docker-image.yml)
 ![Requirements](https://img.shields.io/badge/Requires-.NET%209-blue.svg)
 
-Web service listening for deployment webhook calls from [AppVeyor](https://www.appveyor.com/) CI/CD.
+A web service that listens for deployment webhook calls from [AppVeyor](https://www.appveyor.com/) CI/CD and mirrors build artifacts to your local file system.
 
 ## About
 
-This little project spawns a webhook web server you can point an AppVeyor deployment at to mirror new artifacts to the
-local file system.
-
-<!-- 
-
-Docker build:
-
-docker build --push -t containinger/avar:dev .
-
--->
+This project hosts a webhook server that you can point an AppVeyor deployment to. When new builds complete, it automatically downloads and stores the artifacts locally, bypassing AppVeyor's retention limits.
 
 ## Features
 
-- Mirroring build artifacts to custom infrastructure to circumvent the one-month retention policy.
-- The server initiates the download of the build job artifacts, so the deployment step finishes fast with success. With
-  other deployment methods, network hiccups can often cause the deployment to fail and need manual intervention or
-  retries.
-- A `latest` subdirectory symlink can be auto-generated to provide a fixed URL to the latest build artifacts.
-- Executable metadata like Win32 version resource information is extracted and placed into a hidden `.MyApp.exe.json`
-  file for e.g., auto-updaters to consume and check if newer builds are available.
+- **Artifact mirroring** — Store build artifacts on your own infrastructure to circumvent the one-month retention policy.
+- **Fast deployment completion** — The server initiates artifact downloads asynchronously, so the deployment step finishes quickly and successfully. With other methods, network hiccups often cause deployments to fail and require manual retries.
+- **Latest symlink** — A `latest` subdirectory symlink can be auto-generated to provide a fixed URL for the most recent build artifacts.
+- **Executable metadata** — Win32 version resource information is extracted from executables and written to hidden `.{filename}.json` files (e.g. `.MyApp.exe.json`) for auto-updaters and other tools to consume.
 
-## How to set up
+## Quick Start
 
-- Log into AppVeyor and [create a new deployment](https://ci.appveyor.com/environments/new) with the `Webhook` provider
-- Specify the URL to wherever you're hosting the service (e.g.
-  `https://ci.example.org/webhooks/7b544703-bdd0-4420-9b96-18208076d4df`)
-    - **Important:** use a new, auto-generated GUID here and keep it secret!
-- Adjust the `Webhooks` section in `appsettings.Production.json` to fit your environment (remember to put your GUID
-  there as well)
+### Running with Docker
 
-Once the service is set up and running, it listens to webhook requests that contain the artifact URLs to download from.
-To use this new deployment, adapt the `appveyor.yml` like so:
+```bash
+docker build -t appveyor-artifacts-receiver .
+docker run -d -p 7089:7089 \
+  -v /path/to/data:/data \
+  -v /path/to/appsettings.Production.json:/app/appsettings.Production.json:ro \
+  appveyor-artifacts-receiver
+```
+
+Use the port from your `appsettings.Production.json` (default: 7089). See [docker-compose.example.yml](docker-compose.example.yml) for a full example.
+
+### Configuration
+
+1. Log into AppVeyor and [create a new deployment](https://ci.appveyor.com/environments/new) with the **Webhook** provider.
+2. Specify the URL where you host the service (e.g. `https://ci.example.org/webhooks/7b544703-bdd0-4420-9b96-18208076d4df`).
+   - **Important:** Use a new, auto-generated GUID and keep it secret.
+3. Adjust the `Webhooks` section in `appsettings.Production.json` to match your environment (include your GUID there as well).
+
+Once running, the service listens for webhook requests containing artifact URLs to download.
+
+### AppVeyor Configuration
+
+Add the following to your `appveyor.yml`:
 
 ```yml
 deploy:
@@ -48,13 +51,13 @@ deploy:
       appveyor_repo_tag: true
 ```
 
-### GitHub Actions Support
+## GitHub Actions Support
 
-With some trickery, the same server can be fed from GitHub actions as well!
+The same server can receive webhooks from GitHub Actions with a compatible payload.
 
-#### Single build artifact
+### Single Build Artifact
 
-Example GitHub Action Job (only supports one artifact):
+Example GitHub Actions job (supports one artifact per run):
 
 ```yml
 name: Build and Upload to Buildbot
@@ -93,14 +96,13 @@ jobs:
         id: get_artifact
         shell: bash
         run: |
-          # Get artifacts for this run
           response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
             https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts)
 
           artifact_id=$(echo "$response" | jq -r '.artifacts[0].id')
           artifact_name=$(echo "$response" | jq -r '.artifacts[0].name')
           artifact_url=$(echo "$response" | jq -r ".artifacts[] | select(.id==$artifact_id) | .archive_download_url")
-      
+
           echo "file=$artifact_name.zip" >> $GITHUB_OUTPUT
           echo "url=$artifact_url" >> $GITHUB_OUTPUT
 
@@ -133,7 +135,7 @@ jobs:
             -d "$payload"
 ```
 
-## 3rd party credits
+## Third-Party Credits
 
 - [Polly](https://github.com/App-vNext/Polly)
 - [PeNet](https://github.com/secana/PeNet)
