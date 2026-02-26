@@ -7,7 +7,9 @@ using Microsoft.Extensions.Primitives;
 namespace AppVeyorArtifactsReceiver.Endpoints;
 
 /// <summary>
-///     Endpoint listening for incoming webhook requests.
+///     Handles incoming webhook requests and processes them asynchronously.
+///     Confirms receipt rapidly to accommodate time-sensitive webhook callers
+///     while deferring processing where necessary.
 /// </summary>
 internal sealed class WebhooksEndpoint(IOptions<ServiceConfig> serviceConfig, ILogger<WebhooksEndpoint> logger)
     : Endpoint<WebhookRequest>

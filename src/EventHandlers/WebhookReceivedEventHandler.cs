@@ -17,7 +17,10 @@ using PeNet.Header.Resource;
 namespace AppVeyorArtifactsReceiver.EventHandlers;
 
 /// <summary>
-///     Service that processes received artifacts and stores them on disk.
+///     Handles incoming webhook events by processing artifact information contained in the request.
+///     Extracts and validates data, retrieves configuration settings, and ensures that artifacts are
+///     stored in the specified target destinations. Handles scenarios such as missing artifacts,
+///     updates to target directories, and other processing-specific outcomes.
 /// </summary>
 [SuppressMessage("ReSharper", "InconsistentNaming")]
 [UsedImplicitly]

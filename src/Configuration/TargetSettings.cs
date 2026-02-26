@@ -3,6 +3,11 @@ using System.Diagnostics.CodeAnalysis;
 
 namespace AppVeyorArtifactsReceiver.Configuration;
 
+/// <summary>
+///     Represents the settings used for configuring a target folder for storing artifacts
+///     received from webhook requests. It includes templates for file paths and options
+///     for maintaining metadata related to the stored artifacts.
+/// </summary>
 [SuppressMessage("ReSharper", "ClassNeverInstantiated.Global")]
 [SuppressMessage("ReSharper", "UnusedAutoPropertyAccessor.Global")]
 public sealed class TargetSettings
