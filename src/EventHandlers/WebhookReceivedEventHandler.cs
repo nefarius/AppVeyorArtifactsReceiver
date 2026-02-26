@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -128,13 +128,52 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
     }
 
-    private static async Task CreateTimestampFile(string absoluteTargetPath)
+    private async Task CreateTimestampFile(string absoluteTargetPath)
     {
-        // create/update a file with the last updated timestamp in it for other APIs (or users) to use 
+        DateTime timestamp = DateTime.UtcNow;
+        string timestampString = timestamp.ToString("O");
+
+        // create/update a file with the last updated timestamp in it for other APIs (or users) to use
         string timestampFileAbsolutePath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.txt");
-        await using StreamWriter tsFile = File.CreateText(timestampFileAbsolutePath);
-        await tsFile.WriteAsync(DateTime.UtcNow.ToString("O"));
-        tsFile.Close();
+        await using (StreamWriter tsFile = File.CreateText(timestampFileAbsolutePath))
+        {
+            await tsFile.WriteAsync(timestampString);
+        }
+
+        try
+        {
+            await CreateTimestampSvg(absoluteTargetPath, timestamp);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to create timestamp SVG");
+        }
+    }
+
+    private static async Task CreateTimestampSvg(string absoluteTargetPath, DateTime timestamp)
+    {
+        const string label = "Last updated";
+        string value = timestamp.ToString("O");
+
+        // Approximate character width for 11px monospace; add padding
+        int labelWidth = label.Length * 7 + 20;
+        int valueWidth = value.Length * 7 + 20;
+        int totalWidth = labelWidth + valueWidth;
+        const int height = 20;
+
+        string escapedValue = value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+        string svg = $"""
+            <svg xmlns="http://www.w3.org/2000/svg" width="{totalWidth}" height="{height}">
+              <rect width="{labelWidth}" height="{height}" fill="#555"/>
+              <rect x="{labelWidth}" width="{valueWidth}" height="{height}" fill="#4c1"/>
+              <text x="{labelWidth / 2}" y="14" fill="#fff" text-anchor="middle" font-family="DejaVu Sans,Verdana,sans-serif" font-size="11">{label}</text>
+              <text x="{labelWidth + valueWidth / 2}" y="14" fill="#fff" text-anchor="middle" font-family="DejaVu Sans Mono,monospace" font-size="11">{escapedValue}</text>
+            </svg>
+            """;
+
+        string svgPath = Path.Combine(absoluteTargetPath, "LAST_UPDATED_AT.svg");
+        await File.WriteAllTextAsync(svgPath, svg.Trim());
     }
 
     private async Task ExtractPEMetaData(FileStream file, string absolutePath, CancellationToken ct = default)
