@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Text;
@@ -153,7 +154,7 @@ internal sealed partial class WebhookReceivedEventHandler(
     private static async Task CreateTimestampSvg(string absoluteTargetPath, DateTime timestamp)
     {
         const string label = "Last updated";
-        string value = timestamp.ToString("O");
+        string value = timestamp.ToString("dd MMM yyyy, HH:mm 'UTC'", CultureInfo.InvariantCulture);
 
         // Approximate character width for 11px monospace; add padding
         int labelWidth = label.Length * 7 + 20;
