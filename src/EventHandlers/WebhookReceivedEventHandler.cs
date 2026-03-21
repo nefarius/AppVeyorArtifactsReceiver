@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Diagnostics.CodeAnalysis;
+using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -77,13 +78,22 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                     await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
-                    await using FileStream file = File.Create(absolutePath);
-
-                    await stream.CopyToAsync(file, ct);
-
-                    if (hookCfg.StoreMetaData && IsPEFile(file))
+                    await using (FileStream file = File.Create(absolutePath))
                     {
-                        await ExtractPEMetaData(file, absolutePath, ct);
+                        await stream.CopyToAsync(file, ct);
+                    }
+
+                    if (hookCfg.StoreMetaData)
+                    {
+                        await using FileStream readStream = File.OpenRead(absolutePath);
+                        if (IsZipFile(readStream, artifact.FileName))
+                        {
+                            await ExtractZipPeMetadata(absolutePath, ct);
+                        }
+                        else if (IsPEFile(readStream))
+                        {
+                            await WritePeMetadataSidecarForFile(readStream, absolutePath, ct);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -177,42 +187,178 @@ internal sealed partial class WebhookReceivedEventHandler(
         await File.WriteAllTextAsync(svgPath, svg.Trim());
     }
 
-    private async Task ExtractPEMetaData(FileStream file, string absolutePath, CancellationToken ct = default)
+    private async Task WritePeMetadataSidecarForFile(Stream file, string absolutePePath, CancellationToken ct = default)
     {
-        try
-        {
-            // attempt to put PE metadata into a separate JSON file for automated use
-            file.Position = 0;
-            PeFile peFile = new(file);
-
-            if (peFile.Resources?.VsVersionInfo != null)
-            {
-                StringTable stringTable =
-                    peFile.Resources.VsVersionInfo!.StringFileInfo.StringTable.First();
-
-                string metaDirectory = Path.GetDirectoryName(absolutePath);
-                string metaFileName = Path.GetFileName(absolutePath);
-
-                string metaAbsolutePath = Path.Combine(metaDirectory!, $".{metaFileName}.json");
-                ArtifactMetaData meta = new(stringTable.FileVersion, stringTable.ProductVersion);
-
-                await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(meta), ct);
-
-                logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
-            }
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to PE-parse file {File}", absolutePath);
-        }
+        string metaDirectory = Path.GetDirectoryName(absolutePePath)!;
+        string metaFileName = Path.GetFileName(absolutePePath);
+        string metaAbsolutePath = Path.Combine(metaDirectory, $".{metaFileName}.json");
+        await TryWritePeMetadataJsonAsync(file, metaAbsolutePath, absolutePePath, ct);
     }
 
-    private static bool IsPEFile(FileStream stream)
+    private async Task TryWritePeMetadataJsonAsync(
+        Stream stream,
+        string metaAbsolutePath,
+        string logSourcePath,
+        CancellationToken ct = default)
     {
         try
         {
             stream.Seek(0, SeekOrigin.Begin);
-            using BinaryReader reader = new(stream, Encoding.UTF8, true);
+            PeFile peFile = new(stream);
+
+            if (peFile.Resources?.VsVersionInfo == null)
+            {
+                return;
+            }
+
+            StringTable stringTable =
+                peFile.Resources.VsVersionInfo!.StringFileInfo.StringTable.First();
+
+            ArtifactMetaData meta = new(stringTable.FileVersion, stringTable.ProductVersion);
+
+            string metaDirectory = Path.GetDirectoryName(metaAbsolutePath);
+            if (!string.IsNullOrEmpty(metaDirectory))
+            {
+                Directory.CreateDirectory(metaDirectory);
+            }
+
+            await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(meta), ct);
+
+            logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to PE-parse file {File}", logSourcePath);
+        }
+    }
+
+    private async Task ExtractZipPeMetadata(string zipAbsolutePath, CancellationToken ct)
+    {
+        string zipDirectory = Path.GetDirectoryName(zipAbsolutePath)!;
+        string tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+
+        try
+        {
+            Directory.CreateDirectory(tempDir);
+            ZipFile.ExtractToDirectory(zipAbsolutePath, tempDir);
+
+            foreach (string extractedPath in Directory.EnumerateFiles(tempDir, "*", SearchOption.AllDirectories))
+            {
+                string relative = Path.GetRelativePath(tempDir, extractedPath);
+                if (relative.Contains("..", StringComparison.Ordinal))
+                {
+                    logger.LogWarning("Skipping ZIP entry with invalid relative path {Path}", relative);
+                    continue;
+                }
+
+                string metaAbsolutePath = BuildHiddenMetaJsonPathForZipEntry(zipDirectory, relative);
+                if (string.IsNullOrEmpty(metaAbsolutePath))
+                {
+                    continue;
+                }
+
+                await using FileStream entryStream = File.OpenRead(extractedPath);
+                if (!IsPEFile(entryStream))
+                {
+                    continue;
+                }
+
+                await TryWritePeMetadataJsonAsync(entryStream, metaAbsolutePath, extractedPath, ct);
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to extract or scan ZIP for PE metadata {Zip}", zipAbsolutePath);
+        }
+        finally
+        {
+            try
+            {
+                if (Directory.Exists(tempDir))
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to delete temp directory {TempDir}", tempDir);
+            }
+        }
+    }
+
+    private static string BuildHiddenMetaJsonPathForZipEntry(string zipDirectory, string relativePathFromArchiveRoot)
+    {
+        string normalized = relativePathFromArchiveRoot.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        string[] rawSegments = normalized.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        if (rawSegments.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var segments = new List<string>(rawSegments.Length);
+        foreach (string segment in rawSegments)
+        {
+            switch (segment)
+            {
+                case ".":
+                    continue;
+                case "..":
+                    return string.Empty;
+                default:
+                    segments.Add(segment);
+                    break;
+            }
+        }
+
+        if (segments.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        string fileName = segments[^1];
+        string[] dirSegments = segments.Take(segments.Count - 1).Select(ToHiddenDirectorySegment).ToArray();
+        string metaDir = dirSegments.Length == 0
+            ? zipDirectory
+            : Path.Combine(new[] { zipDirectory }.Concat(dirSegments).ToArray());
+
+        return Path.Combine(metaDir, $".{fileName}.json");
+    }
+
+    private static string ToHiddenDirectorySegment(string segment) =>
+        segment.Length > 0 && segment[0] == '.' ? segment : $".{segment}";
+
+    private static bool IsZipFile(FileStream stream, string artifactFileName)
+    {
+        try
+        {
+            stream.Seek(0, SeekOrigin.Begin);
+            using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
+            uint signature = reader.ReadUInt32();
+            if (signature == 0x04034b50)
+            {
+                return true;
+            }
+
+            if (Path.GetExtension(artifactFileName).Equals(".zip", StringComparison.OrdinalIgnoreCase))
+            {
+                stream.Seek(0, SeekOrigin.Begin);
+                return reader.ReadUInt16() != 0x5A4D;
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPEFile(Stream stream)
+    {
+        try
+        {
+            stream.Seek(0, SeekOrigin.Begin);
+            using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
             // Check for the "MZ" magic number at the start of the file
             if (reader.ReadUInt16() != 0x5A4D) // "MZ" in hex
             {
