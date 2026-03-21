@@ -115,22 +115,25 @@ internal sealed partial class WebhookReceivedEventHandler(
             // updates the "latest" special directory symlink with the most up-to-date target
             if (!string.IsNullOrEmpty(hookCfg.TargetPathTemplate))
             {
-                string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
-                string absoluteSymlinkPath = Path.Combine(hookCfg.RootDirectory, latestSubDirectory);
-
-                try
+                if (!string.IsNullOrEmpty(hookCfg.LatestSymlinkTemplate))
                 {
-                    if (Directory.Exists(absoluteSymlinkPath))
+                    string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
+                    string absoluteSymlinkPath = Path.Combine(hookCfg.RootDirectory, latestSubDirectory);
+
+                    try
                     {
-                        Directory.Delete(absoluteSymlinkPath);
-                    }
+                        if (Directory.Exists(absoluteSymlinkPath))
+                        {
+                            Directory.Delete(absoluteSymlinkPath);
+                        }
 
-                    FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
-                    logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to create symbolic link");
+                        FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
+                        logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to create symbolic link");
+                    }
                 }
 
                 try
