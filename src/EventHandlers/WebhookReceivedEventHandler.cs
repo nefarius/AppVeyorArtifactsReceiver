@@ -32,6 +32,14 @@ internal sealed partial class WebhookReceivedEventHandler(
     IHttpClientFactory httpClientFactory)
     : IEventHandler<WebhookRequest>
 {
+    private const int MaxZipEntriesToScan = 8192;
+    private const long MaxZipEntryBytes = 256L * 1024 * 1024;
+
+    private static readonly string[] PeLikeExtensions =
+    [
+        ".exe", ".dll", ".sys", ".ocx", ".scr", ".efi", ".cpl", ".mui", ".drv", ".msc"
+    ];
+
     public async Task HandleAsync(WebhookRequest req, CancellationToken ct)
     {
         TargetSettings hookCfg = serviceConfig.Value.Webhooks
@@ -88,7 +96,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                         await using FileStream readStream = File.OpenRead(absolutePath);
                         if (IsZipFile(readStream, artifact.FileName))
                         {
-                            await ExtractZipPeMetadata(absolutePath, ct);
+                            await ExtractZipPeMetadata(absolutePath, artifact.FileName, ct);
                         }
                         else if (IsPEFile(readStream))
                         {
@@ -232,38 +240,111 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
     }
 
-    private async Task ExtractZipPeMetadata(string zipAbsolutePath, CancellationToken ct)
+    private async Task ExtractZipPeMetadata(string zipAbsolutePath, string artifactFileName, CancellationToken ct)
     {
         string zipDirectory = Path.GetDirectoryName(zipAbsolutePath)!;
+        string zipBaseName = SanitizeArchiveBaseName(Path.GetFileNameWithoutExtension(zipAbsolutePath));
         string tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
 
         try
         {
             Directory.CreateDirectory(tempDir);
-            ZipFile.ExtractToDirectory(zipAbsolutePath, tempDir);
 
-            foreach (string extractedPath in Directory.EnumerateFiles(tempDir, "*", SearchOption.AllDirectories))
+            using ZipArchive archive = ZipFile.OpenRead(zipAbsolutePath);
+            int scanned = 0;
+            foreach (ZipArchiveEntry entry in archive.Entries)
             {
-                string relative = Path.GetRelativePath(tempDir, extractedPath);
-                if (relative.Contains("..", StringComparison.Ordinal))
+                ct.ThrowIfCancellationRequested();
+
+                if (scanned++ >= MaxZipEntriesToScan)
                 {
-                    logger.LogWarning("Skipping ZIP entry with invalid relative path {Path}", relative);
-                    continue;
+                    logger.LogWarning("ZIP entry scan limit reached for {Zip}", zipAbsolutePath);
+                    break;
                 }
 
-                string metaAbsolutePath = BuildHiddenMetaJsonPathForZipEntry(zipDirectory, relative);
-                if (string.IsNullOrEmpty(metaAbsolutePath))
-                {
-                    continue;
-                }
-
-                await using FileStream entryStream = File.OpenRead(extractedPath);
-                if (!IsPEFile(entryStream))
+                if (string.IsNullOrEmpty(entry.Name))
                 {
                     continue;
                 }
 
-                await TryWritePeMetadataJsonAsync(entryStream, metaAbsolutePath, extractedPath, ct);
+                if (entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
+                    entry.FullName.EndsWith("\\", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                string relativeForMeta = entry.FullName.Replace('/', Path.DirectorySeparatorChar)
+                    .Replace('\\', Path.DirectorySeparatorChar);
+
+                if (HasInvalidParentPathSegment(relativeForMeta))
+                {
+                    logger.LogWarning("Skipping ZIP entry with invalid relative path {Path}", relativeForMeta);
+                    continue;
+                }
+
+                if (!IsZipEntryPathSafeForProcessing(relativeForMeta))
+                {
+                    logger.LogWarning("Skipping ZIP entry with unsafe path {Path}", relativeForMeta);
+                    continue;
+                }
+
+                if (entry.Length == 0)
+                {
+                    continue;
+                }
+
+                if (entry.Length > MaxZipEntryBytes)
+                {
+                    logger.LogDebug("Skipping oversized ZIP entry {Path} ({Length} bytes)", entry.FullName, entry.Length);
+                    continue;
+                }
+
+                bool looksLikePeByExt = HasPeLikeExtension(entry.Name);
+                if (!looksLikePeByExt)
+                {
+                    await using (Stream peekStream = entry.Open())
+                    {
+                        if (!await QuickLooksLikeMzHeaderAsync(peekStream, ct))
+                        {
+                            continue;
+                        }
+                    }
+                }
+
+                string tempFile = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + ".pe");
+                try
+                {
+                    await using (Stream entryStream = entry.Open())
+                    await using (FileStream tempOutput = new(tempFile, FileMode.Create, FileAccess.Write,
+                        FileShare.None, bufferSize: 81920, useAsync: true))
+                    {
+                        long maxBytes = Math.Min(entry.Length, MaxZipEntryBytes);
+                        await CopyLimitedAsync(entryStream, tempOutput, maxBytes, ct);
+                    }
+
+                    await using FileStream peStream = File.OpenRead(tempFile);
+                    if (!IsPEFile(peStream))
+                    {
+                        continue;
+                    }
+
+                    string metaAbsolutePath =
+                        BuildHiddenMetaJsonPathForZipEntry(zipDirectory, zipBaseName, relativeForMeta);
+                    if (string.IsNullOrEmpty(metaAbsolutePath))
+                    {
+                        continue;
+                    }
+
+                    string logLabel = string.IsNullOrEmpty(artifactFileName)
+                        ? $"{zipAbsolutePath}!{entry.FullName}"
+                        : $"{artifactFileName}!{entry.FullName}";
+
+                    await TryWritePeMetadataJsonAsync(peStream, metaAbsolutePath, logLabel, ct);
+                }
+                finally
+                {
+                    TryDeleteFile(tempFile);
+                }
             }
         }
         catch (Exception ex)
@@ -286,7 +367,10 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
     }
 
-    private static string BuildHiddenMetaJsonPathForZipEntry(string zipDirectory, string relativePathFromArchiveRoot)
+    private static string BuildHiddenMetaJsonPathForZipEntry(
+        string zipDirectory,
+        string zipArchiveBaseName,
+        string relativePathFromArchiveRoot)
     {
         string normalized = relativePathFromArchiveRoot.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
         string[] rawSegments = normalized.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
@@ -317,11 +401,118 @@ internal sealed partial class WebhookReceivedEventHandler(
 
         string fileName = segments[^1];
         string[] dirSegments = segments.Take(segments.Count - 1).Select(ToHiddenDirectorySegment).ToArray();
+        string namespacedRoot = Path.Combine(zipDirectory, ToHiddenDirectorySegment(zipArchiveBaseName));
         string metaDir = dirSegments.Length == 0
-            ? zipDirectory
-            : Path.Combine(new[] { zipDirectory }.Concat(dirSegments).ToArray());
+            ? namespacedRoot
+            : Path.Combine(new[] { namespacedRoot }.Concat(dirSegments).ToArray());
 
         return Path.Combine(metaDir, $".{fileName}.json");
+    }
+
+    private static bool HasInvalidParentPathSegment(string relativePath)
+    {
+        string normalized = relativePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        foreach (string segment in normalized.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (segment == "..")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsZipEntryPathSafeForProcessing(string entryRelativePath)
+    {
+        if (string.IsNullOrEmpty(entryRelativePath) || entryRelativePath.IndexOf(':') >= 0)
+        {
+            return false;
+        }
+
+        string normalized = entryRelativePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(normalized))
+        {
+            return false;
+        }
+
+        string root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "zip_slip_check"));
+        string resolved = Path.GetFullPath(Path.Combine(root, normalized));
+        string rootFull = Path.GetFullPath(root);
+        return resolved.StartsWith(rootFull + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+               resolved.Equals(rootFull, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string SanitizeArchiveBaseName(string baseName)
+    {
+        if (string.IsNullOrEmpty(baseName))
+        {
+            return "archive";
+        }
+
+        char[] invalid = Path.GetInvalidFileNameChars();
+        IEnumerable<char> sanitized = baseName.Select(c => invalid.Contains(c) ? '_' : c);
+        string result = new string(sanitized.ToArray());
+        if (string.IsNullOrWhiteSpace(result) || result is "." or "..")
+        {
+            return "archive";
+        }
+
+        return result;
+    }
+
+    private static bool HasPeLikeExtension(string entryName)
+    {
+        string ext = Path.GetExtension(entryName);
+        foreach (string e in PeLikeExtensions)
+        {
+            if (ext.Equals(e, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static async Task<bool> QuickLooksLikeMzHeaderAsync(Stream stream, CancellationToken ct)
+    {
+        byte[] buffer = new byte[2];
+        int n = await stream.ReadAsync(buffer.AsMemory(0, 2), ct);
+        return n == 2 && buffer[0] == 0x4D && buffer[1] == 0x5A;
+    }
+
+    private static async Task CopyLimitedAsync(Stream source, Stream destination, long maxBytes, CancellationToken ct)
+    {
+        byte[] buffer = new byte[81920];
+        long remaining = maxBytes;
+        while (remaining > 0)
+        {
+            int toRead = (int)Math.Min(buffer.Length, remaining);
+            int read = await source.ReadAsync(buffer.AsMemory(0, toRead), ct);
+            if (read == 0)
+            {
+                break;
+            }
+
+            await destination.WriteAsync(buffer.AsMemory(0, read), ct);
+            remaining -= read;
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // best-effort cleanup of temp PE scratch file
+        }
     }
 
     private static string ToHiddenDirectorySegment(string segment) =>
