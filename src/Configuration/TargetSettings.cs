@@ -33,4 +33,15 @@ public sealed class TargetSettings
     ///     Gets whether automatic ".artifact-name.exe.json" metadata files should be generated.
     /// </summary>
     public bool StoreMetaData { get; set; } = true;
+
+    /// <summary>
+    ///     Maximum ZIP entries to scan per artifact for PE metadata. Zero uses the built-in default (8192).
+    /// </summary>
+    public int ZipMaxEntriesToScan { get; set; }
+
+    /// <summary>
+    ///     Maximum uncompressed size in bytes of a single ZIP entry to load for PE parsing. Zero uses the built-in default
+    ///     (256 MiB).
+    /// </summary>
+    public long ZipMaxEntryBytes { get; set; }
 }
