@@ -127,7 +127,8 @@ internal sealed partial class WebhookReceivedEventHandler(
                             Directory.Delete(absoluteSymlinkPath);
                         }
 
-                        FileSystemInfo linkInfo = File.CreateSymbolicLink(absoluteSymlinkPath, absoluteTargetPath);
+                        DirectoryInfo linkInfo = (DirectoryInfo)Directory.CreateSymbolicLink(
+                            absoluteSymlinkPath, absoluteTargetPath);
                         logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
                     }
                     catch (Exception ex)
