@@ -1,6 +1,8 @@
+using System.Buffers;
 using System.Globalization;
 using System.Diagnostics.CodeAnalysis;
 using System.IO.Compression;
+using System.Linq;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -32,8 +34,8 @@ internal sealed partial class WebhookReceivedEventHandler(
     IHttpClientFactory httpClientFactory)
     : IEventHandler<WebhookRequest>
 {
-    private const int MaxZipEntriesToScan = 8192;
-    private const long MaxZipEntryBytes = 256L * 1024 * 1024;
+    private const int DefaultMaxZipEntriesToScan = 8192;
+    private const long DefaultMaxZipEntryBytes = 256L * 1024 * 1024;
 
     private static readonly string[] PeLikeExtensions =
     [
@@ -94,9 +96,9 @@ internal sealed partial class WebhookReceivedEventHandler(
                     if (hookCfg.StoreMetaData)
                     {
                         await using FileStream readStream = File.OpenRead(absolutePath);
-                        if (IsZipFile(readStream, artifact.FileName))
+                        if (IsZipFile(readStream))
                         {
-                            await ExtractZipPeMetadata(absolutePath, artifact.FileName, ct);
+                            await ExtractZipPeMetadata(absolutePath, artifact.FileName, hookCfg, ct);
                         }
                         else if (IsPEFile(readStream))
                         {
@@ -219,8 +221,17 @@ internal sealed partial class WebhookReceivedEventHandler(
                 return;
             }
 
-            StringTable stringTable =
-                peFile.Resources.VsVersionInfo!.StringFileInfo.StringTable.First();
+            StringFileInfo stringInfo = peFile.Resources.VsVersionInfo!.StringFileInfo;
+            if (stringInfo?.StringTable == null)
+            {
+                return;
+            }
+
+            StringTable stringTable = stringInfo.StringTable.FirstOrDefault();
+            if (stringTable == null)
+            {
+                return;
+            }
 
             ArtifactMetaData meta = new(stringTable.FileVersion, stringTable.ProductVersion);
 
@@ -240,8 +251,19 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
     }
 
-    private async Task ExtractZipPeMetadata(string zipAbsolutePath, string artifactFileName, CancellationToken ct)
+    private async Task ExtractZipPeMetadata(
+        string zipAbsolutePath,
+        string artifactFileName,
+        TargetSettings targetSettings,
+        CancellationToken ct)
     {
+        int maxZipEntriesToScan = targetSettings.ZipMaxEntriesToScan > 0
+            ? targetSettings.ZipMaxEntriesToScan
+            : DefaultMaxZipEntriesToScan;
+        long maxZipEntryBytes = targetSettings.ZipMaxEntryBytes > 0
+            ? targetSettings.ZipMaxEntryBytes
+            : DefaultMaxZipEntryBytes;
+
         string zipDirectory = Path.GetDirectoryName(zipAbsolutePath)!;
         string zipBaseName = SanitizeArchiveBaseName(Path.GetFileNameWithoutExtension(zipAbsolutePath));
         string tempDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -256,7 +278,7 @@ internal sealed partial class WebhookReceivedEventHandler(
             {
                 ct.ThrowIfCancellationRequested();
 
-                if (scanned++ >= MaxZipEntriesToScan)
+                if (scanned++ >= maxZipEntriesToScan)
                 {
                     logger.LogWarning("ZIP entry scan limit reached for {Zip}", zipAbsolutePath);
                     break;
@@ -293,7 +315,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                     continue;
                 }
 
-                if (entry.Length > MaxZipEntryBytes)
+                if (entry.Length > maxZipEntryBytes)
                 {
                     logger.LogDebug("Skipping oversized ZIP entry {Path} ({Length} bytes)", entry.FullName, entry.Length);
                     continue;
@@ -318,7 +340,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                     await using (FileStream tempOutput = new(tempFile, FileMode.Create, FileAccess.Write,
                         FileShare.None, bufferSize: 81920, useAsync: true))
                     {
-                        long maxBytes = Math.Min(entry.Length, MaxZipEntryBytes);
+                        long maxBytes = Math.Min(entry.Length, maxZipEntryBytes);
                         await CopyLimitedAsync(entryStream, tempOutput, maxBytes, ct);
                     }
 
@@ -484,19 +506,26 @@ internal sealed partial class WebhookReceivedEventHandler(
 
     private static async Task CopyLimitedAsync(Stream source, Stream destination, long maxBytes, CancellationToken ct)
     {
-        byte[] buffer = new byte[81920];
-        long remaining = maxBytes;
-        while (remaining > 0)
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
+        try
         {
-            int toRead = (int)Math.Min(buffer.Length, remaining);
-            int read = await source.ReadAsync(buffer.AsMemory(0, toRead), ct);
-            if (read == 0)
+            long remaining = maxBytes;
+            while (remaining > 0)
             {
-                break;
-            }
+                int toRead = (int)Math.Min(buffer.Length, remaining);
+                int read = await source.ReadAsync(buffer.AsMemory(0, toRead), ct);
+                if (read == 0)
+                {
+                    break;
+                }
 
-            await destination.WriteAsync(buffer.AsMemory(0, read), ct);
-            remaining -= read;
+                await destination.WriteAsync(buffer.AsMemory(0, read), ct);
+                remaining -= read;
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -515,28 +544,24 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
     }
 
-    private static string ToHiddenDirectorySegment(string segment) =>
-        segment.Length > 0 && segment[0] == '.' ? segment : $".{segment}";
+    private static string ToHiddenDirectorySegment(string segment)
+    {
+        if (string.IsNullOrEmpty(segment))
+        {
+            return "._";
+        }
 
-    private static bool IsZipFile(FileStream stream, string artifactFileName)
+        return $".{segment}";
+    }
+
+    private static bool IsZipFile(FileStream stream)
     {
         try
         {
             stream.Seek(0, SeekOrigin.Begin);
             using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
             uint signature = reader.ReadUInt32();
-            if (signature == 0x04034b50)
-            {
-                return true;
-            }
-
-            if (Path.GetExtension(artifactFileName).Equals(".zip", StringComparison.OrdinalIgnoreCase))
-            {
-                stream.Seek(0, SeekOrigin.Begin);
-                return reader.ReadUInt16() != 0x5A4D;
-            }
-
-            return false;
+            return signature == 0x04034b50;
         }
         catch
         {
