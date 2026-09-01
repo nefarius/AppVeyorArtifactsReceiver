@@ -1,0 +1,139 @@
+name: Send artifacts to AppVeyor Artifacts Receiver
+description: >
+  Discover artifacts from the current GitHub Actions run and notify an
+  AppVeyorArtifactsReceiver webhook so they can be mirrored locally.
+author: nefarius
+
+branding:
+  icon: package
+  color: blue
+
+inputs:
+  webhook-url:
+    description: >
+      Receiver webhook URL (for example https://ci.example.org/webhooks/<guid>).
+      Store this as a repository secret; do not commit it.
+    required: true
+  github-token:
+    description: >
+      GitHub token used to list artifacts and forwarded to the receiver as
+      X-GitHub-Token so archive_download_url values can be fetched. The calling
+      job needs actions: read.
+    required: true
+  artifact-name:
+    description: >
+      If set, only the artifact with this exact name is sent. When omitted,
+      every non-expired artifact from the current workflow run is sent.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Discover artifacts and notify receiver
+      uses: actions/github-script@v9
+      env:
+        WEBHOOK_URL: ${{ inputs.webhook-url }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        ARTIFACT_NAME: ${{ inputs.artifact-name }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const webhookUrl = (process.env.WEBHOOK_URL || '').trim();
+          const token = (process.env.INPUT_GITHUB_TOKEN || '').trim();
+          const artifactNameFilter = (process.env.ARTIFACT_NAME || '').trim();
+
+          if (!webhookUrl) {
+            core.setFailed('Input webhook-url is required.');
+            return;
+          }
+
+          if (!token) {
+            core.setFailed('Input github-token is required.');
+            return;
+          }
+
+          const { owner, repo } = context.repo;
+          const runId = context.runId;
+          const artifacts = [];
+
+          for await (const response of github.paginate.iterator(
+            github.rest.actions.listWorkflowRunArtifacts,
+            {
+              owner,
+              repo,
+              run_id: runId,
+              per_page: 100
+            }
+          )) {
+            artifacts.push(...response.data.artifacts);
+          }
+
+          const available = artifacts.filter((artifact) => !artifact.expired);
+          const selected = artifactNameFilter
+            ? available.filter((artifact) => artifact.name === artifactNameFilter)
+            : available;
+
+          if (selected.length === 0) {
+            if (artifactNameFilter) {
+              core.setFailed(
+                `No non-expired artifact named "${artifactNameFilter}" was found in run ${runId}. Upload it before calling this action.`
+              );
+            } else {
+              core.setFailed(
+                `No non-expired artifacts were found for run ${runId}. Upload artifacts before calling this action.`
+              );
+            }
+            return;
+          }
+
+          const missingUrl = selected.find((artifact) => !artifact.archive_download_url);
+          if (missingUrl) {
+            core.setFailed(
+              `Artifact "${missingUrl.name}" has no archive_download_url. Confirm the token has actions: read.`
+            );
+            return;
+          }
+
+          const payload = {
+            artifacts: selected.map((artifact) => ({
+              fileName: `${artifact.name}.zip`,
+              url: artifact.archive_download_url
+            })),
+            environmentVariables: {
+              appveyor_project_name: context.payload.repository?.name || repo,
+              appveyor_repo_branch: process.env.GITHUB_REF_NAME || '',
+              appveyor_build_version: process.env.GITHUB_REF_NAME || ''
+            }
+          };
+
+          core.info(
+            `Sending ${payload.artifacts.length} artifact(s) from run ${runId}: ${selected.map((artifact) => artifact.name).join(', ')}`
+          );
+
+          let response;
+          try {
+            response = await fetch(webhookUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-GitHub-Token': token
+              },
+              body: JSON.stringify(payload)
+            });
+          } catch (error) {
+            const detail = error.cause?.code || error.name || 'network error';
+            core.setFailed(`Failed to reach the artifacts receiver (${detail}).`);
+            return;
+          }
+
+          const body = (await response.text()).trim();
+          if (!response.ok) {
+            const snippet = body ? body.slice(0, 200) : 'empty body';
+            core.setFailed(
+              `Artifacts receiver returned HTTP ${response.status} ${response.statusText}: ${snippet}`
+            );
+            return;
+          }
+
+          core.info(`Artifacts receiver accepted the webhook (HTTP ${response.status}).`);

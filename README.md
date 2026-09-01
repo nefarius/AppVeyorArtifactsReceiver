@@ -73,11 +73,15 @@ deploy:
 
 ## GitHub Actions Support
 
-The same server can receive webhooks from GitHub Actions with a compatible payload. The `artifacts` array may contain **multiple** entries; each is downloaded in turn. The sample workflow below shows a single artifact for simplicity.
+The same server can receive webhooks from GitHub Actions with a compatible payload. The `artifacts` array may contain **multiple** entries; each is downloaded in turn.
 
-When artifact URLs are GitHub Actions `archive_download_url` values, send the same token the workflow uses for the API in the **`X-GitHub-Token`** header. The receiver attaches it as a Bearer token for the download and, when this header is present, **waits until processing finishes** before responding with `OK`, so short-lived tokens remain valid for the actual HTTP GET.
+When artifact URLs are GitHub Actions `archive_download_url` values, the requester must send the same token the workflow uses for the API in the **`X-GitHub-Token`** header. The receiver attaches it as a Bearer token for the download and, when this header is present, **waits until processing finishes** before responding with `OK`, so short-lived tokens remain valid for the actual HTTP GET.
 
-### Example workflow (one artifact per run)
+This repository ships a reusable composite action that does that work for you: it lists artifacts from the **current** workflow run, builds the compatible payload, and POSTs it to your receiver. Store the webhook URL (including the secret GUID path) as `WEBHOOK_URL`. The calling job needs `actions: read` so the action can list artifacts, and you must **upload artifacts before** invoking it.
+
+Pin `uses:` to a tag or commit in production if you do not want to follow `master`.
+
+### Example workflow
 
 ```yml
 name: Build and Upload to Buildbot
@@ -115,47 +119,22 @@ jobs:
           name: ${{ github.event.repository.name }}
           path: publish/**
 
-      - name: Get artifact metadata
-        id: get_artifact
-        shell: bash
-        run: |
-          response=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts)
+      - name: Notify artifacts receiver
+        uses: nefarius/AppVeyorArtifactsReceiver@master
+        with:
+          webhook-url: ${{ secrets.WEBHOOK_URL }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+```
 
-          artifact_id=$(echo "$response" | jq -r '.artifacts[0].id')
-          artifact_name=$(echo "$response" | jq -r '.artifacts[0].name')
-          artifact_url=$(echo "$response" | jq -r ".artifacts[] | select(.id==$artifact_id) | .archive_download_url")
+By default the action sends **every** non-expired artifact from the run. To send only one, set `artifact-name` to the exact `actions/upload-artifact` name:
 
-          echo "file=$artifact_name.zip" >> $GITHUB_OUTPUT
-          echo "url=$artifact_url" >> $GITHUB_OUTPUT
-
-      - name: Send webhook
-        shell: bash
-        run: |
-          payload=$(jq -n \
-            --arg fileName "${{ steps.get_artifact.outputs.file }}" \
-            --arg url "${{ steps.get_artifact.outputs.url }}" \
-            --arg projectName "${{ github.event.repository.name }}" \
-            --arg branch "${{ github.ref_name }}" \
-            --arg buildVersion "${{ github.ref_name }}" \
-            '{
-              artifacts: [
-                {
-                  fileName: $fileName,
-                  url: $url
-                }
-              ],
-              environmentVariables: {
-                appveyor_project_name: $projectName,
-                appveyor_repo_branch: $branch,
-                appveyor_build_version: $buildVersion
-              }
-            }')
-
-          curl -X POST "${{ secrets.WEBHOOK_URL }}" \
-            -H "Content-Type: application/json" \
-            -H "X-GitHub-Token: ${{ secrets.GITHUB_TOKEN }}" \
-            -d "$payload"
+```yml
+      - name: Notify artifacts receiver
+        uses: nefarius/AppVeyorArtifactsReceiver@master
+        with:
+          webhook-url: ${{ secrets.WEBHOOK_URL }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          artifact-name: ${{ github.event.repository.name }}
 ```
 
 ## Third-Party Credits
