@@ -92,6 +92,7 @@ on:
       - "v*"   # Only run when pushing tags that start with 'v'
 
 permissions:
+  contents: read
   actions: read   # Required to list artifacts via the API
 
 jobs:
