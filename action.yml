@@ -55,19 +55,19 @@ runs:
 
           const { owner, repo } = context.repo;
           const runId = context.runId;
-          const artifacts = [];
 
-          for await (const response of github.paginate.iterator(
+          const artifacts = await github.paginate(
             github.rest.actions.listWorkflowRunArtifacts,
             {
               owner,
               repo,
               run_id: runId,
               per_page: 100
-            }
-          )) {
-            artifacts.push(...response.data.artifacts);
-          }
+            },
+            (response) => Array.isArray(response.data)
+              ? response.data
+              : (response.data?.artifacts ?? [])
+          );
 
           const available = artifacts.filter((artifact) => !artifact.expired);
           const selected = artifactNameFilter
