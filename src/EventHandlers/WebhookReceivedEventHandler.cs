@@ -56,7 +56,14 @@ internal sealed partial class WebhookReceivedEventHandler(
 
             logger.LogInformation("Build sub-directory {Directory}", subDirectory);
 
-            string absoluteTargetPath = Path.Combine(hookCfg.RootDirectory, subDirectory);
+            if (!TryResolveUnderRoot(hookCfg.RootDirectory, subDirectory, out string absoluteTargetPath))
+            {
+                logger.LogError(
+                    "Expanded target path {Path} is rooted or escapes RootDirectory {Root}",
+                    subDirectory, hookCfg.RootDirectory);
+                return;
+            }
+
             Directory.CreateDirectory(absoluteTargetPath);
 
             if (req.Artifacts.Count == 0)
@@ -68,7 +75,13 @@ internal sealed partial class WebhookReceivedEventHandler(
             // each job can have multiple artifacts
             foreach (Artifact artifact in req.Artifacts)
             {
-                string absolutePath = Path.Combine(hookCfg.RootDirectory, subDirectory, artifact.FileName);
+                if (!TryResolveUnderRoot(absoluteTargetPath, artifact.FileName, out string absolutePath))
+                {
+                    logger.LogError(
+                        "Artifact file name {FileName} is rooted or escapes target directory {Target}",
+                        artifact.FileName, absoluteTargetPath);
+                    continue;
+                }
 
                 try
                 {
@@ -118,22 +131,30 @@ internal sealed partial class WebhookReceivedEventHandler(
                 if (!string.IsNullOrEmpty(hookCfg.LatestSymlinkTemplate))
                 {
                     string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
-                    string absoluteSymlinkPath = Path.Combine(hookCfg.RootDirectory, latestSubDirectory);
-
-                    try
+                    if (!TryResolveUnderRoot(hookCfg.RootDirectory, latestSubDirectory,
+                            out string absoluteSymlinkPath))
                     {
-                        if (Directory.Exists(absoluteSymlinkPath))
-                        {
-                            Directory.Delete(absoluteSymlinkPath);
-                        }
-
-                        DirectoryInfo linkInfo = (DirectoryInfo)Directory.CreateSymbolicLink(
-                            absoluteSymlinkPath, absoluteTargetPath);
-                        logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+                        logger.LogError(
+                            "Expanded symlink path {Path} is rooted or escapes RootDirectory {Root}",
+                            latestSubDirectory, hookCfg.RootDirectory);
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        logger.LogError(ex, "Failed to create symbolic link");
+                        try
+                        {
+                            if (Directory.Exists(absoluteSymlinkPath))
+                            {
+                                Directory.Delete(absoluteSymlinkPath);
+                            }
+
+                            DirectoryInfo linkInfo = (DirectoryInfo)Directory.CreateSymbolicLink(
+                                absoluteSymlinkPath, absoluteTargetPath);
+                            logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogError(ex, "Failed to create symbolic link");
+                        }
                     }
                 }
 
@@ -614,5 +635,42 @@ internal sealed partial class WebhookReceivedEventHandler(
                 ? value
                 : throw new Exception($"Unknown key {key}");
         });
+    }
+
+    /// <summary>
+    ///     Resolves <paramref name="relativePath" /> under <paramref name="rootDirectory" />. Rejects rooted paths and
+    ///     <c>..</c> traversal that would escape the root; allows relative paths (including <c>foo/../bar</c>) that stay
+    ///     inside it. Containment uses <see cref="Path.GetRelativePath" /> so comparison follows the host filesystem.
+    ///     <see cref="Path.Combine" /> is not used alone because a rooted second argument replaces the root.
+    /// </summary>
+    private static bool TryResolveUnderRoot(string rootDirectory, string relativePath, out string fullPath)
+    {
+        fullPath = null;
+
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return false;
+        }
+
+        string normalized = relativePath.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(normalized))
+        {
+            return false;
+        }
+
+        string rootFull = Path.GetFullPath(rootDirectory);
+        string resolved = Path.GetFullPath(Path.Combine(rootFull, normalized));
+        string relativeToRoot = Path.GetRelativePath(rootFull, resolved);
+
+        if (relativeToRoot.Equals("..", StringComparison.Ordinal) ||
+            relativeToRoot.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+            relativeToRoot.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal) ||
+            Path.IsPathRooted(relativeToRoot))
+        {
+            return false;
+        }
+
+        fullPath = resolved;
+        return true;
     }
 }

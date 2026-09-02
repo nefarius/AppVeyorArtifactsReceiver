@@ -13,14 +13,15 @@ namespace AppVeyorArtifactsReceiver.Configuration;
 public sealed class TargetSettings
 {
     /// <summary>
-    ///     The subdirectory to put the artifact in. Supports all AppVeyor environment variables as substitutes for
-    ///     placeholders.
+    ///     The subdirectory to put the artifact in. Supports <c>{placeholder}</c> tokens from the webhook
+    ///     <c>environmentVariables</c> object (AppVeyor deployment variables or GitHub values synthesized by the bundled
+    ///     action).
     /// </summary>
     public required string TargetPathTemplate { get; set; }
 
     /// <summary>
-    ///     The subdirectory to put the symbolic link to the latest build in. Supports all AppVeyor environment variables as
-    ///     substitutes for placeholders.
+    ///     The subdirectory to put the symbolic link to the latest build in. Supports the same <c>{placeholder}</c> tokens as
+    ///     <see cref="TargetPathTemplate" />.
     /// </summary>
     public string? LatestSymlinkTemplate { get; set; }
 
