@@ -32,7 +32,83 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact for PE metadata. Use `0` for the built-in default (**8192**). |
 | `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to load for parsing. Use `0` for the built-in default (**256 MiB**). |
 
-**Path safety:** The service combines `RootDirectory` with the expanded `TargetPathTemplate` and `LatestSymlinkTemplate` paths using `Path.Combine`. It does **not** re-check that the result stays inside `RootDirectory`. If placeholder values (from webhook `environmentVariables`) can contain `..`, absolute paths, or other traversal segments, the resolved path may escape the intended root—affecting creation of build directories, artifact writes, PE sidecars, the latest symlink target, and `LAST_UPDATED_AT.txt` / `LAST_UPDATED_AT.svg` under the build directory. Validate or sanitize those variables at the source (CI payload) so expanded templates resolve strictly under `RootDirectory`.
+### Path placeholders
+
+`TargetPathTemplate` and `LatestSymlinkTemplate` expand `{placeholder}` tokens from the webhook JSON `environmentVariables` object. The receiver does not invent values: AppVeyor sends its deployment environment variables, and the bundled GitHub Action synthesizes the catalog below. An unknown placeholder **fails** processing for that request.
+
+Token names must match `[a-z_][a-z0-9_]*` (letters, digits, underscore; must start with a letter or underscore). Matching is case-insensitive, but lookup uses the key as written in the template against the payload keys, so prefer the lowercase names in this document.
+
+**Path safety:** The service combines `RootDirectory` with the expanded `TargetPathTemplate` and `LatestSymlinkTemplate` paths using `Path.Combine`. It does **not** re-check that the result stays inside `RootDirectory`, and placeholder values are **not sanitized**. Refs, workflow names, and repository slugs can contain `/` or other path separators; values may also contain `..` or absolute segments. Either case can create extra directories or escape the intended root—affecting build directories, artifact writes, PE sidecars, the latest symlink, and `LAST_UPDATED_AT.txt` / `LAST_UPDATED_AT.svg`. Validate or sanitize those variables at the source (CI payload) so expanded templates resolve strictly under `RootDirectory`. Prefer tokens that are single path segments (`github_repository_name`, `github_ref_name`, run numbers) over values that embed slashes (`github_repository`, `github_ref`).
+
+#### AppVeyor
+
+AppVeyor webhook deployments include the build's environment variables. Any of those keys can be used as `{placeholder}` tokens. Names are typically lowercase in the payload (for example `appveyor_build_version`, not `APPVEYOR_BUILD_VERSION`).
+
+Common variables used in path templates:
+
+| Placeholder | Typical meaning |
+| ----------- | --------------- |
+| `{appveyor_project_name}` | Project display name |
+| `{appveyor_project_slug}` | Project slug from the AppVeyor URL |
+| `{appveyor_repo_name}` | Repository as `owner-name/repo-name` (contains `/`) |
+| `{appveyor_repo_branch}` | Branch being built (for PRs: the base branch) |
+| `{appveyor_repo_tag_name}` | Tag name when the build was started by a tag |
+| `{appveyor_build_version}` | Build version (unique per project when AppVeyor versioning is used) |
+| `{appveyor_build_number}` | Incremental build number |
+| `{appveyor_build_id}` | Unique AppVeyor build ID |
+| `{appveyor_repo_commit}` | Commit SHA |
+
+See AppVeyor's [environment variables](https://www.appveyor.com/docs/environment-variables/) for the full catalog, including commit author, PR, and job fields.
+
+Example (also in [src/appsettings.Production.example.json](src/appsettings.Production.example.json)):
+
+```json
+"TargetPathTemplate": "builds/{appveyor_project_name}/{appveyor_repo_branch}/{appveyor_build_version}",
+"LatestSymlinkTemplate": "builds/{appveyor_project_name}/latest"
+```
+
+#### GitHub Actions
+
+The bundled action always sends the three AppVeyor-compatible aliases **and** a native `github_*` catalog. Existing AppVeyor-oriented templates keep working; new GitHub-only templates should use the native names.
+
+**Compatibility aliases** (unchanged; not unique per GitHub run):
+
+| Placeholder | Source |
+| ----------- | ------ |
+| `{appveyor_project_name}` | Repository name (`DsHidMini`) |
+| `{appveyor_repo_branch}` | `GITHUB_REF_NAME` (branch or tag name) |
+| `{appveyor_build_version}` | Same as `{appveyor_repo_branch}` — **not** a GitHub run number |
+
+Using the AppVeyor example template against GitHub therefore stores artifacts under `builds/DsHidMini/master/master`. Every later push or rerun of `master` overwrites that directory and retargets `latest` at it.
+
+**Native GitHub placeholders** synthesized by [action.yml](action.yml):
+
+| Placeholder | Source | Notes |
+| ----------- | ------ | ----- |
+| `{github_repository_owner}` | `context.repo.owner` | Owner or org login |
+| `{github_repository_name}` | Repository name | Single path segment; prefer this over `{github_repository}` |
+| `{github_repository}` | `GITHUB_REPOSITORY` | `owner/name` — contains `/` |
+| `{github_ref}` | `GITHUB_REF` | e.g. `refs/heads/master` — contains `/` |
+| `{github_ref_name}` | `GITHUB_REF_NAME` | Branch or tag name |
+| `{github_ref_type}` | `GITHUB_REF_TYPE` | `branch` or `tag` |
+| `{github_sha}` | `GITHUB_SHA` | Commit SHA for the run |
+| `{github_workflow}` | `GITHUB_WORKFLOW` | Workflow name (may contain spaces or `/`) |
+| `{github_event_name}` | `GITHUB_EVENT_NAME` | e.g. `push`, `workflow_dispatch` |
+| `{github_actor}` | `GITHUB_ACTOR` | User that triggered the run |
+| `{github_run_id}` | `context.runId` | Unique across GitHub |
+| `{github_run_number}` | `context.runNumber` | Unique **within one workflow file**, not the whole repository |
+| `{github_run_attempt}` | `GITHUB_RUN_ATTEMPT` | `1` on the first try; increments on *Re-run jobs* |
+
+Recommended GitHub templates (rerun-safe, shorter run number):
+
+```json
+"TargetPathTemplate": "builds/{github_repository_name}/{github_ref_name}/{github_run_number}-{github_run_attempt}",
+"LatestSymlinkTemplate": "builds/{github_repository_name}/latest"
+```
+
+For [run 33663544790](https://github.com/nefarius/DsHidMini/actions/runs/33663544790) (`DsHidMini`, branch `master`, run number `30`, attempt `2`) that resolves to `builds/DsHidMini/master/30-2`. Attempt 2 does not overwrite attempt 1.
+
+Run numbers are unique only within a single workflow. If two workflows in the same repository can produce the same number, use `{github_run_id}-{github_run_attempt}` instead for repository-wide uniqueness.
 
 ## Quick Start
 
@@ -77,7 +153,7 @@ The same server can receive webhooks from GitHub Actions with a compatible paylo
 
 When artifact URLs are GitHub Actions `archive_download_url` values, the requester must send the same token the workflow uses for the API in the **`X-GitHub-Token`** header. The receiver attaches it as a Bearer token for the download and, when this header is present, **waits until processing finishes** before responding with `OK`, so short-lived tokens remain valid for the actual HTTP GET.
 
-This repository ships a reusable composite action that does that work for you: it lists artifacts from the **current** workflow run, builds the compatible payload, and POSTs it to your receiver. Store the webhook URL (including the secret GUID path) as `WEBHOOK_URL`. The calling job needs `actions: read` so the action can list artifacts, and you must **upload artifacts before** invoking it.
+This repository ships a reusable composite action that does that work for you: it lists artifacts from the **current** workflow run, builds the compatible payload (including the `github_*` placeholders documented above), and POSTs it to your receiver. Store the webhook URL (including the secret GUID path) as `WEBHOOK_URL`. The calling job needs `actions: read` so the action can list artifacts, and you must **upload artifacts before** invoking it.
 
 Pin `uses:` to a tag or commit in production if you do not want to follow `master`.
 

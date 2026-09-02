@@ -95,15 +95,34 @@ runs:
             return;
           }
 
+          const repositoryName = context.payload.repository?.name || repo;
+          const repositoryFullName =
+            process.env.GITHUB_REPOSITORY || `${owner}/${repo}`;
+
           const payload = {
             artifacts: selected.map((artifact) => ({
               fileName: `${artifact.name}.zip`,
               url: artifact.archive_download_url
             })),
             environmentVariables: {
-              appveyor_project_name: context.payload.repository?.name || repo,
+              // AppVeyor-compatible aliases for existing templates.
+              appveyor_project_name: repositoryName,
               appveyor_repo_branch: process.env.GITHUB_REF_NAME || '',
-              appveyor_build_version: process.env.GITHUB_REF_NAME || ''
+              appveyor_build_version: process.env.GITHUB_REF_NAME || '',
+              // Native GitHub placeholders. Prefer these for unique paths.
+              github_repository_owner: owner,
+              github_repository_name: repositoryName,
+              github_repository: repositoryFullName,
+              github_ref: process.env.GITHUB_REF || '',
+              github_ref_name: process.env.GITHUB_REF_NAME || '',
+              github_ref_type: process.env.GITHUB_REF_TYPE || '',
+              github_sha: process.env.GITHUB_SHA || context.sha || '',
+              github_workflow: process.env.GITHUB_WORKFLOW || context.workflow || '',
+              github_event_name: process.env.GITHUB_EVENT_NAME || context.eventName || '',
+              github_actor: process.env.GITHUB_ACTOR || context.actor || '',
+              github_run_id: String(context.runId ?? process.env.GITHUB_RUN_ID ?? ''),
+              github_run_number: String(context.runNumber ?? process.env.GITHUB_RUN_NUMBER ?? ''),
+              github_run_attempt: String(process.env.GITHUB_RUN_ATTEMPT || '')
             }
           };
 
