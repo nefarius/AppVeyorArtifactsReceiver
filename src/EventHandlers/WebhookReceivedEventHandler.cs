@@ -75,7 +75,13 @@ internal sealed partial class WebhookReceivedEventHandler(
             // each job can have multiple artifacts
             foreach (Artifact artifact in req.Artifacts)
             {
-                string absolutePath = Path.Combine(absoluteTargetPath, artifact.FileName);
+                if (!TryResolveUnderRoot(absoluteTargetPath, artifact.FileName, out string absolutePath))
+                {
+                    logger.LogError(
+                        "Artifact file name {FileName} is rooted or escapes target directory {Target}",
+                        artifact.FileName, absoluteTargetPath);
+                    continue;
+                }
 
                 try
                 {
@@ -634,7 +640,8 @@ internal sealed partial class WebhookReceivedEventHandler(
     /// <summary>
     ///     Resolves <paramref name="relativePath" /> under <paramref name="rootDirectory" />. Rejects rooted paths and
     ///     <c>..</c> traversal that would escape the root; allows relative paths (including <c>foo/../bar</c>) that stay
-    ///     inside it. <see cref="Path.Combine" /> is not used alone because a rooted second argument replaces the root.
+    ///     inside it. Containment uses <see cref="Path.GetRelativePath" /> so comparison follows the host filesystem.
+    ///     <see cref="Path.Combine" /> is not used alone because a rooted second argument replaces the root.
     /// </summary>
     private static bool TryResolveUnderRoot(string rootDirectory, string relativePath, out string fullPath)
     {
@@ -653,12 +660,12 @@ internal sealed partial class WebhookReceivedEventHandler(
 
         string rootFull = Path.GetFullPath(rootDirectory);
         string resolved = Path.GetFullPath(Path.Combine(rootFull, normalized));
-        string rootPrefix = rootFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                            + Path.DirectorySeparatorChar;
+        string relativeToRoot = Path.GetRelativePath(rootFull, resolved);
 
-        if (!resolved.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) &&
-            !resolved.Equals(rootFull.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                StringComparison.OrdinalIgnoreCase))
+        if (relativeToRoot.Equals("..", StringComparison.Ordinal) ||
+            relativeToRoot.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+            relativeToRoot.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal) ||
+            Path.IsPathRooted(relativeToRoot))
         {
             return false;
         }

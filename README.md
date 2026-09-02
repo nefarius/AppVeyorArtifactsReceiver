@@ -1,4 +1,4 @@
-# <img src="assets/NSS-128x128.png" align="left" /> AppVeyor Artifacts Receiver
+# <img src="assets/NSS-128x128.png" align="left" alt="Nefarius Software Solutions" /> AppVeyor Artifacts Receiver
 
 [![Docker Image CI](https://github.com/nefarius/AppVeyorArtifactsReceiver/actions/workflows/docker-image.yml/badge.svg)](https://github.com/nefarius/AppVeyorArtifactsReceiver/actions/workflows/docker-image.yml)
 ![Requirements](https://img.shields.io/badge/Requires-.NET%209-blue.svg)
@@ -58,11 +58,11 @@ The `artifacts` array may contain **multiple** entries; each is downloaded in tu
 Recommended path templates (rerun-safe):
 
 ```json
-"TargetPathTemplate": "builds/{github_repository_name}/{github_ref_name}/{github_run_number}-{github_run_attempt}",
-"LatestSymlinkTemplate": "builds/{github_repository_name}/latest"
+"TargetPathTemplate": "builds/{github_repository_owner}/{github_repository_name}/{github_ref_name}/{github_run_id}-{github_run_attempt}",
+"LatestSymlinkTemplate": "builds/{github_repository_owner}/{github_repository_name}/latest"
 ```
 
-For [run 33663544790](https://github.com/nefarius/DsHidMini/actions/runs/33663544790) (`DsHidMini`, branch `master`, run number `30`, attempt `2`) that resolves to `builds/DsHidMini/master/30-2`. Attempt 2 does not overwrite attempt 1. On an unmerged pull request, `{github_ref_name}` is `<pr_number>/merge` (an extra path segment). See [Path placeholders](#path-placeholders) for the full catalog and when to prefer `{github_run_id}`.
+For [run 33663544790](https://github.com/nefarius/DsHidMini/actions/runs/33663544790) (owner `nefarius`, `DsHidMini`, branch `master`, run id `33663544790`, attempt `2`) that resolves to `builds/nefarius/DsHidMini/master/33663544790-2`. Owner plus run id avoids collisions across same-named repositories and workflows; attempt 2 does not overwrite attempt 1. On an unmerged pull request, `{github_ref_name}` is `<pr_number>/merge` (an extra path segment). See [Path placeholders](#path-placeholders) for the full catalog.
 
 ### Example workflow
 
@@ -185,14 +185,14 @@ The bundled action always sends a native `github_*` catalog **and** three AppVey
 | `{github_run_number}` | `context.runNumber` | Unique **within one workflow file**, not the whole repository |
 | `{github_run_attempt}` | `GITHUB_RUN_ATTEMPT` | `1` on the first try; increments on *Re-run jobs* |
 
-Recommended GitHub templates (rerun-safe, shorter run number):
+Recommended GitHub templates (rerun-safe; unique across owners, repositories, and workflows):
 
 ```json
-"TargetPathTemplate": "builds/{github_repository_name}/{github_ref_name}/{github_run_number}-{github_run_attempt}",
-"LatestSymlinkTemplate": "builds/{github_repository_name}/latest"
+"TargetPathTemplate": "builds/{github_repository_owner}/{github_repository_name}/{github_ref_name}/{github_run_id}-{github_run_attempt}",
+"LatestSymlinkTemplate": "builds/{github_repository_owner}/{github_repository_name}/latest"
 ```
 
-Run numbers are unique only within a single workflow. `{github_run_id}` is unique within the repository (not globally across GitHub) and does not change on re-run; use `{github_run_id}-{github_run_attempt}` when you need a rerun-safe directory that stays unique across workflows in that repo.
+`{github_run_id}` is unique within a repository (not globally across GitHub) and does not change on re-run. `{github_run_number}` is unique only within one workflow file; do not use it alone if multiple workflows or same-named repositories share a `RootDirectory`.
 
 **Compatibility aliases** (not unique per GitHub run):
 
