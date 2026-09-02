@@ -1,9 +1,9 @@
-# <img src="assets/NSS-128x128.png" align="left" /> AppVeyor Artifacts Receiver
+# <img src="assets/NSS-128x128.png" align="left" /> AppVeyor (and GitHub!) Artifacts Receiver
 
 [![Docker Image CI](https://github.com/nefarius/AppVeyorArtifactsReceiver/actions/workflows/docker-image.yml/badge.svg)](https://github.com/nefarius/AppVeyorArtifactsReceiver/actions/workflows/docker-image.yml)
 ![Requirements](https://img.shields.io/badge/Requires-.NET%209-blue.svg)
 
-A web service that listens for deployment webhook calls from [AppVeyor](https://www.appveyor.com/) CI/CD and mirrors build artifacts to your local file system.
+A web service that listens for deployment webhook calls from [AppVeyor](https://www.appveyor.com/) (and GitHub actions) CI/CD and mirrors build artifacts to your local file system.
 
 ## About
 
