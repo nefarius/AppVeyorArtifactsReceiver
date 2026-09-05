@@ -36,13 +36,14 @@ public sealed class TargetSettings
     public bool StoreMetaData { get; set; } = true;
 
     /// <summary>
-    ///     Maximum ZIP entries to scan per artifact for PE metadata. Zero uses the built-in default (8192).
+    ///     Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor PE metadata).
+    ///     Zero uses the built-in default (8192).
     /// </summary>
     public int ZipMaxEntriesToScan { get; set; }
 
     /// <summary>
-    ///     Maximum uncompressed size in bytes of a single ZIP entry to load for PE parsing. Zero uses the built-in default
-    ///     (256 MiB).
+    ///     Maximum uncompressed size in bytes of a single ZIP entry to extract or load for PE parsing.
+    ///     Zero uses the built-in default (256 MiB).
     /// </summary>
     public long ZipMaxEntryBytes { get; set; }
 }
