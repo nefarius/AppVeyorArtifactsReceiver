@@ -106,7 +106,22 @@ internal sealed partial class WebhookReceivedEventHandler(
                         await stream.CopyToAsync(file, ct);
                     }
 
-                    if (hookCfg.StoreMetaData)
+                    bool isGitHubArtifact = !string.IsNullOrEmpty(req.GitHubToken);
+                    bool isZip;
+                    await using (FileStream probe = File.OpenRead(absolutePath))
+                    {
+                        isZip = IsZipFile(probe);
+                    }
+
+                    // GitHub Actions artifacts are always a zip. Unpack into the build
+                    // directory so in-archive paths (e.g. bin/ControlApp.exe) become public
+                    // URLs, then drop the container zip. AppVeyor uploads stay as-is.
+                    if (isGitHubArtifact && isZip)
+                    {
+                        await ExtractGitHubZipToTarget(absolutePath, absoluteTargetPath, hookCfg, ct);
+                        TryDeleteFile(absolutePath);
+                    }
+                    else if (hookCfg.StoreMetaData)
                     {
                         await using FileStream readStream = File.OpenRead(absolutePath);
                         if (IsZipFile(readStream))
@@ -274,6 +289,99 @@ internal sealed partial class WebhookReceivedEventHandler(
         {
             logger.LogWarning(ex, "Failed to PE-parse file {File}", logSourcePath);
         }
+    }
+
+    /// <summary>
+    ///     Unpacks a GitHub Actions artifact zip into <paramref name="absoluteTargetPath" />, preserving
+    ///     in-archive relative paths. Nested zips are written as files and not opened again. PE sidecars
+    ///     are written next to extracted executables (same as loose AppVeyor files).
+    /// </summary>
+    private async Task ExtractGitHubZipToTarget(
+        string zipAbsolutePath,
+        string absoluteTargetPath,
+        TargetSettings targetSettings,
+        CancellationToken ct)
+    {
+        int maxZipEntriesToScan = targetSettings.ZipMaxEntriesToScan > 0
+            ? targetSettings.ZipMaxEntriesToScan
+            : DefaultMaxZipEntriesToScan;
+        long maxZipEntryBytes = targetSettings.ZipMaxEntryBytes > 0
+            ? targetSettings.ZipMaxEntryBytes
+            : DefaultMaxZipEntryBytes;
+
+        using ZipArchive archive = ZipFile.OpenRead(zipAbsolutePath);
+        int extracted = 0;
+        foreach (ZipArchiveEntry entry in archive.Entries)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            if (extracted >= maxZipEntriesToScan)
+            {
+                logger.LogWarning("ZIP entry extract limit reached for {Zip}", zipAbsolutePath);
+                break;
+            }
+
+            if (string.IsNullOrEmpty(entry.Name) ||
+                entry.FullName.EndsWith("/", StringComparison.Ordinal) ||
+                entry.FullName.EndsWith("\\", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            string relativePath = entry.FullName.Replace('/', Path.DirectorySeparatorChar)
+                .Replace('\\', Path.DirectorySeparatorChar);
+
+            if (HasInvalidParentPathSegment(relativePath) || !IsZipEntryPathSafeForProcessing(relativePath))
+            {
+                logger.LogWarning("Skipping ZIP entry with unsafe path {Path}", relativePath);
+                continue;
+            }
+
+            if (!TryResolveUnderRoot(absoluteTargetPath, relativePath, out string destPath))
+            {
+                logger.LogWarning(
+                    "Skipping ZIP entry {Path} that escapes target directory {Target}",
+                    relativePath, absoluteTargetPath);
+                continue;
+            }
+
+            if (entry.Length > maxZipEntryBytes)
+            {
+                logger.LogWarning(
+                    "Skipping oversized ZIP entry {Path} ({Length} bytes)",
+                    entry.FullName, entry.Length);
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+
+            await using (Stream entryStream = entry.Open())
+            await using (FileStream dest = new(destPath, FileMode.Create, FileAccess.Write,
+                FileShare.None, bufferSize: 81920, useAsync: true))
+            {
+                long maxBytes = entry.Length > 0
+                    ? Math.Min(entry.Length, maxZipEntryBytes)
+                    : maxZipEntryBytes;
+                await CopyLimitedAsync(entryStream, dest, maxBytes, ct);
+            }
+
+            extracted++;
+            logger.LogInformation("Extracted {Entry} to {Path}", entry.FullName, destPath);
+
+            if (!targetSettings.StoreMetaData)
+            {
+                continue;
+            }
+
+            await using FileStream readStream = File.OpenRead(destPath);
+            if (IsPEFile(readStream))
+            {
+                await WritePeMetadataSidecarForFile(readStream, destPath, ct);
+            }
+        }
+
+        logger.LogInformation("Extracted {Count} entries from {Zip} into {Target}",
+            extracted, zipAbsolutePath, absoluteTargetPath);
     }
 
     private async Task ExtractZipPeMetadata(

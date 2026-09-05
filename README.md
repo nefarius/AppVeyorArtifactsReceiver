@@ -21,7 +21,8 @@ Use one receiver for either CI, or both at once (give each provider its own webh
 - **Latest timestamp file** — When `TargetPathTemplate` is set, `LAST_UPDATED_AT.txt` is written in the build directory with the ISO 8601 timestamp when each deployment completes, for APIs or scripts to consume (independent of whether `LatestSymlinkTemplate` is configured).
 - **SVG badge** — `LAST_UPDATED_AT.svg` is generated alongside the timestamp file under the same rules.
 - **Executable metadata** — When `StoreMetaData` is enabled, Win32 version resource data (`FileVersion`, `ProductVersion`) is extracted from PE files (`.exe`, `.dll`, and similar) and written to hidden sidecar JSON next to the file (e.g. `.MyApp.exe.json`) for auto-updaters and other tools.
-- **ZIP artifact metadata** — If the downloaded artifact is a ZIP, the same metadata extraction runs over entries inside the archive: entries are scanned up to a configurable limit, oversized entries are skipped, paths are validated (including zip-slip checks), and PEs without a typical extension are detected via the MZ header. Sidecars are stored under a hidden tree rooted at `.{sanitized_zip_basename}/`, mirroring the in-archive path (each directory segment is stored as a hidden segment; each file gets a `.filename.json` sidecar in the corresponding mirrored folder).
+- **GitHub Actions zip extraction** — Requests that send `X-GitHub-Token` download a zip (`actions/upload-artifact`). The receiver unpacks that zip into the build directory (preserving in-archive paths, zip-slip checked), writes PE sidecars next to extracted executables, and deletes the container zip. Nested zips are left as files. AppVeyor uploads are not unpacked.
+- **ZIP artifact metadata** — If an AppVeyor artifact is itself a ZIP (no GitHub token), PE metadata is scanned inside the archive without extracting it: entries are scanned up to a configurable limit, oversized entries are skipped, paths are validated (including zip-slip checks), and PEs without a typical extension are detected via the MZ header. Sidecars are stored under a hidden tree rooted at `.{sanitized_zip_basename}/`, mirroring the in-archive path (each directory segment is stored as a hidden segment; each file gets a `.filename.json` sidecar in the corresponding mirrored folder).
 
 ## Quick start
 
@@ -51,7 +52,7 @@ Once running, the service accepts POSTs with artifact URLs to download. Wire up 
 
 The bundled composite action lists artifacts from the **current** workflow run, builds the payload (including the `github_*` placeholders below), and POSTs it to your receiver.
 
-Store the webhook URL (including the secret GUID path) as `WEBHOOK_URL`. The calling job needs `actions: read`, and you must **upload artifacts before** invoking the action. When artifact URLs are GitHub `archive_download_url` values, the action sends the workflow token in **`X-GitHub-Token`**. The receiver uses it as a Bearer token for the download and **waits until processing finishes** before responding with `OK`.
+Store the webhook URL (including the secret GUID path) as `WEBHOOK_URL`. The calling job needs `actions: read`, and you must **upload artifacts before** invoking the action. When artifact URLs are GitHub `archive_download_url` values, the action sends the workflow token in **`X-GitHub-Token`**. The receiver uses it as a Bearer token for the download, **extracts the zip into the build directory** (so a glob such as `bin/*.exe` becomes `…/latest/bin/ControlApp.exe`), and **waits until processing finishes** before responding with `OK`. Use a glob or directory `path:` on `upload-artifact` if you need that prefix; a single-file path is flattened to the zip root.
 
 The `artifacts` array may contain **multiple** entries; each is downloaded in turn. Pin `uses:` to a tag or commit in production if you do not want to follow `master`.
 
@@ -152,8 +153,8 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | `LatestSymlinkTemplate` | Optional. Set this only if you want a `latest`-style symlink: after a successful deployment, the symlink at the expanded path is updated to point at the current build directory (same `{placeholder}` rules as `TargetPathTemplate`). Omit it if you do not need that indirection. |
 | `RootDirectory` | **Required.** Root folder on disk where build trees and metadata are stored (e.g. `/data` in Docker). |
 | `StoreMetaData` | Optional; default `true`. Set `false` to skip PE metadata sidecars for both loose PE files and ZIP contents. |
-| `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact for PE metadata. Use `0` for the built-in default (**8192**). |
-| `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to load for parsing. Use `0` for the built-in default (**256 MiB**). |
+| `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries extracted (GitHub Actions) or examined for PE metadata (AppVeyor) per artifact. Use `0` for the built-in default (**8192**). |
+| `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to extract or load for parsing. Use `0` for the built-in default (**256 MiB**). |
 
 ### Path placeholders
 
