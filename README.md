@@ -153,7 +153,7 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | `LatestSymlinkTemplate` | Optional. Set this only if you want a `latest`-style symlink: after a successful deployment, the symlink at the expanded path is updated to point at the current build directory (same `{placeholder}` rules as `TargetPathTemplate`). Omit it if you do not need that indirection. |
 | `RootDirectory` | **Required.** Root folder on disk where build trees and metadata are stored (e.g. `/data` in Docker). |
 | `StoreMetaData` | Optional; default `true`. Set `false` to skip PE metadata sidecars for both loose PE files and ZIP contents. |
-| `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries extracted (GitHub Actions) or examined for PE metadata (AppVeyor) per artifact. Use `0` for the built-in default (**8192**). |
+| `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor PE metadata). Use `0` for the built-in default (**8192**). |
 | `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to extract or load for parsing. Use `0` for the built-in default (**256 MiB**). |
 
 ### Path placeholders

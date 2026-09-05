@@ -310,14 +310,15 @@ internal sealed partial class WebhookReceivedEventHandler(
             : DefaultMaxZipEntryBytes;
 
         using ZipArchive archive = ZipFile.OpenRead(zipAbsolutePath);
+        int examined = 0;
         int extracted = 0;
         foreach (ZipArchiveEntry entry in archive.Entries)
         {
             ct.ThrowIfCancellationRequested();
 
-            if (extracted >= maxZipEntriesToScan)
+            if (examined++ >= maxZipEntriesToScan)
             {
-                logger.LogWarning("ZIP entry extract limit reached for {Zip}", zipAbsolutePath);
+                logger.LogWarning("ZIP entry examination limit reached for {Zip}", zipAbsolutePath);
                 break;
             }
 
