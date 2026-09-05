@@ -28,7 +28,17 @@ Use one receiver for either CI, or both at once (give each provider its own webh
 
 ### Run with Docker
 
-The image [Dockerfile](Dockerfile) exposes port **8080** by default for the base ASP.NET layer; in practice you configure the listen URL in your mounted `appsettings.Production.json` (the examples use **7089**). Map the host port to whatever port the app binds to inside the container.
+Published images are on Docker Hub as [`containinger/avar`](https://hub.docker.com/r/containinger/avar). The [Dockerfile](Dockerfile) exposes port **8080** by default for the base ASP.NET layer; in practice you configure the listen URL in your mounted `appsettings.Production.json` (the examples use **7089**). Map the host port to whatever port the app binds to inside the container.
+
+```bash
+docker pull containinger/avar
+docker run -d -p 7089:7089 \
+  -v /path/to/data:/data \
+  -v /path/to/appsettings.Production.json:/app/appsettings.Production.json:ro \
+  containinger/avar
+```
+
+To build the image locally instead:
 
 ```bash
 docker build -t appveyor-artifacts-receiver .
