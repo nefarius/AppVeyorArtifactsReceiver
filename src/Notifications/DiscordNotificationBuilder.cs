@@ -70,7 +70,7 @@ internal static class DiscordNotificationBuilder
         return new DiscordEmbedField
         {
             Name = name,
-            Value = string.IsNullOrWhiteSpace(value) ? "unknown" : value,
+            Value = string.IsNullOrWhiteSpace(value) ? "unknown" : Truncate(value, 1024)!,
             Inline = inline
         };
     }

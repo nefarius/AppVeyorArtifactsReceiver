@@ -47,15 +47,13 @@ builder.Services.AddHttpClient("AppVeyor",
 
 builder.Services.AddSingleton<DiscordWebhookNotifier>();
 builder.Services.AddHttpClient(DiscordWebhookNotifier.HttpClientName,
-        client =>
-        {
-            client.Timeout = TimeSpan.FromSeconds(8);
-            client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(
-                Assembly.GetEntryAssembly()?.GetName().Name!,
-                Assembly.GetEntryAssembly()?.GetName().Version!.ToString()));
-        })
-    .AddTransientHttpErrorPolicy(pb =>
-        pb.WaitAndRetryAsync(Backoff.DecorrelatedJitterBackoffV2(TimeSpan.FromSeconds(1), 2)));
+    client =>
+    {
+        client.Timeout = DiscordWebhookNotifier.RequestTimeout;
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(
+            Assembly.GetEntryAssembly()?.GetName().Name!,
+            Assembly.GetEntryAssembly()?.GetName().Version!.ToString()));
+    });
 
 WebApplication app = builder.Build().Setup();
 

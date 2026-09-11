@@ -81,6 +81,26 @@ public sealed class DiscordNotificationBuilderTests
     }
 
     [Fact]
+    public void Field_value_of_1024_characters_is_kept()
+    {
+        string raw = new('a', 1024);
+        DiscordEmbed embed = EmbedWithTarget(raw);
+
+        Assert.Equal(raw, Field(embed, "Target"));
+        Assert.Equal(1024, Field(embed, "Target").Length);
+    }
+
+    [Fact]
+    public void Field_value_of_1025_characters_is_truncated_to_1024()
+    {
+        string raw = new('a', 1025);
+        string value = Field(EmbedWithTarget(raw), "Target");
+
+        Assert.Equal(1024, value.Length);
+        Assert.Equal(new string('a', 1023) + "…", value);
+    }
+
+    [Fact]
     public void Serialized_payload_disables_mentions()
     {
         WebhookRequest request = CreateAppVeyorRequest();
@@ -95,6 +115,17 @@ public sealed class DiscordNotificationBuilderTests
         Assert.Equal(0, parse.GetArrayLength());
         Assert.Equal(DiscordNotificationBuilder.SuccessColor,
             document.RootElement.GetProperty("embeds")[0].GetProperty("color").GetInt32());
+    }
+
+    private static DiscordEmbed EmbedWithTarget(string target)
+    {
+        WebhookRequest request = CreateAppVeyorRequest();
+        JobProcessingResult result = new()
+        {
+            TargetSubDirectory = target
+        };
+        result.RecordArtifactSuccess();
+        return Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
     }
 
     private static string Field(DiscordEmbed embed, string name)

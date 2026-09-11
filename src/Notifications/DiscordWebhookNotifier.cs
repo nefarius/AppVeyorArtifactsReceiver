@@ -18,6 +18,8 @@ internal sealed class DiscordWebhookNotifier(
 {
     public const string HttpClientName = "Discord";
 
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(8);
+
     public async Task NotifyAsync(
         IEnumerable<string>? webhookUrls,
         WebhookRequest request,

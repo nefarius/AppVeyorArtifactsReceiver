@@ -80,6 +80,22 @@ public sealed class DiscordWebhookNotifierTests
     }
 
     [Fact]
+    public async Task NotifyAsync_does_not_replay_a_transient_http_failure()
+    {
+        RecordingHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        DiscordWebhookNotifier notifier = CreateNotifier(handler);
+
+        await notifier.NotifyAsync(
+            ["https://discord.com/api/webhooks/1/token"],
+            CreateRequest(),
+            CreateSuccessResult(),
+            CancellationToken.None);
+
+        RecordedRequest posted = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, posted.Method);
+    }
+
+    [Fact]
     public void NormalizeUrls_skips_blanks_and_duplicates()
     {
         List<string> urls = DiscordWebhookNotifier.NormalizeUrls(
