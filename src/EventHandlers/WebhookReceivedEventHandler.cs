@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 
 using AppVeyorArtifactsReceiver.Configuration;
 using AppVeyorArtifactsReceiver.Models;
+using AppVeyorArtifactsReceiver.Notifications;
 
 using JetBrains.Annotations;
 
@@ -31,7 +32,8 @@ namespace AppVeyorArtifactsReceiver.EventHandlers;
 internal sealed partial class WebhookReceivedEventHandler(
     ILogger<WebhookReceivedEventHandler> logger,
     IOptionsSnapshot<ServiceConfig> serviceConfig,
-    IHttpClientFactory httpClientFactory)
+    IHttpClientFactory httpClientFactory,
+    DiscordWebhookNotifier discordNotifier)
     : IEventHandler<WebhookRequest>
 {
     private const int DefaultMaxZipEntriesToScan = 8192;
@@ -50,142 +52,186 @@ internal sealed partial class WebhookReceivedEventHandler(
         logger.LogDebug("Target settings: {@TargetSettings}", hookCfg);
         logger.LogDebug("Request: {@WebhookRequest}", req);
 
+        JobProcessingResult result = new();
+
         try
         {
-            string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
-
-            logger.LogInformation("Build sub-directory {Directory}", subDirectory);
-
-            if (!TryResolveUnderRoot(hookCfg.RootDirectory, subDirectory, out string absoluteTargetPath))
+            try
             {
-                logger.LogError(
-                    "Expanded target path {Path} is rooted or escapes RootDirectory {Root}",
-                    subDirectory, hookCfg.RootDirectory);
-                return;
-            }
+                string subDirectory = Replace(hookCfg.TargetPathTemplate, req.EnvironmentVariables);
+                result.TargetSubDirectory = subDirectory;
 
-            Directory.CreateDirectory(absoluteTargetPath);
+                logger.LogInformation("Build sub-directory {Directory}", subDirectory);
 
-            if (req.Artifacts.Count == 0)
-            {
-                logger.LogWarning("No artifacts found for build {BuildId}", req.BuildId);
-                return;
-            }
-
-            // each job can have multiple artifacts
-            foreach (Artifact artifact in req.Artifacts)
-            {
-                if (!TryResolveUnderRoot(absoluteTargetPath, artifact.FileName, out string absolutePath))
+                if (!TryResolveUnderRoot(hookCfg.RootDirectory, subDirectory, out string absoluteTargetPath))
                 {
                     logger.LogError(
-                        "Artifact file name {FileName} is rooted or escapes target directory {Target}",
-                        artifact.FileName, absoluteTargetPath);
-                    continue;
+                        "Expanded target path {Path} is rooted or escapes RootDirectory {Root}",
+                        subDirectory, hookCfg.RootDirectory);
+                    result.RecordError(
+                        $"Expanded target path {subDirectory} is rooted or escapes RootDirectory {hookCfg.RootDirectory}");
+                    return;
                 }
 
-                try
+                Directory.CreateDirectory(absoluteTargetPath);
+
+                if (req.Artifacts.Count == 0)
                 {
-                    logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
-                        artifact.FileName, subDirectory);
-
-                    Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
-
-                    using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
-
-                    // GitHub artifacts accessed via REST API require token auth
-                    if (!string.IsNullOrEmpty(req.GitHubToken))
-                    {
-                        httpClient.DefaultRequestHeaders.Authorization =
-                            new AuthenticationHeaderValue("Bearer", req.GitHubToken);
-                    }
-
-                    await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
-
-                    await using (FileStream file = File.Create(absolutePath))
-                    {
-                        await stream.CopyToAsync(file, ct);
-                    }
-
-                    bool isGitHubArtifact = !string.IsNullOrEmpty(req.GitHubToken);
-                    bool isZip;
-                    await using (FileStream probe = File.OpenRead(absolutePath))
-                    {
-                        isZip = IsZipFile(probe);
-                    }
-
-                    // GitHub Actions artifacts are always a zip. Unpack into the build
-                    // directory so in-archive paths (e.g. bin/ControlApp.exe) become public
-                    // URLs, then drop the container zip. AppVeyor uploads stay as-is.
-                    if (isGitHubArtifact && isZip)
-                    {
-                        await ExtractGitHubZipToTarget(absolutePath, absoluteTargetPath, hookCfg, ct);
-                        TryDeleteFile(absolutePath);
-                    }
-                    else if (hookCfg.StoreMetaData)
-                    {
-                        await using FileStream readStream = File.OpenRead(absolutePath);
-                        if (IsZipFile(readStream))
-                        {
-                            await ExtractZipPeMetadata(absolutePath, artifact.FileName, hookCfg, ct);
-                        }
-                        else if (IsPEFile(readStream))
-                        {
-                            await WritePeMetadataSidecarForFile(readStream, absolutePath, ct);
-                        }
-                    }
+                    logger.LogWarning("No artifacts found for build {BuildId}", req.BuildId);
+                    result.RecordError($"No artifacts found for build {req.BuildId}");
+                    return;
                 }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
-                }
-            }
 
-            // updates the "latest" special directory symlink with the most up-to-date target
-            if (!string.IsNullOrEmpty(hookCfg.TargetPathTemplate))
-            {
-                if (!string.IsNullOrEmpty(hookCfg.LatestSymlinkTemplate))
+                // each job can have multiple artifacts
+                foreach (Artifact artifact in req.Artifacts)
                 {
-                    string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
-                    if (!TryResolveUnderRoot(hookCfg.RootDirectory, latestSubDirectory,
-                            out string absoluteSymlinkPath))
+                    if (!TryResolveUnderRoot(absoluteTargetPath, artifact.FileName, out string absolutePath))
                     {
                         logger.LogError(
-                            "Expanded symlink path {Path} is rooted or escapes RootDirectory {Root}",
-                            latestSubDirectory, hookCfg.RootDirectory);
+                            "Artifact file name {FileName} is rooted or escapes target directory {Target}",
+                            artifact.FileName, absoluteTargetPath);
+                        result.RecordArtifactFailure(
+                            $"Artifact file name {artifact.FileName} is rooted or escapes target directory");
+                        continue;
                     }
-                    else
+
+                    try
                     {
-                        try
-                        {
-                            if (Directory.Exists(absoluteSymlinkPath))
-                            {
-                                Directory.Delete(absoluteSymlinkPath);
-                            }
+                        logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
+                            artifact.FileName, subDirectory);
 
-                            DirectoryInfo linkInfo = (DirectoryInfo)Directory.CreateSymbolicLink(
-                                absoluteSymlinkPath, absoluteTargetPath);
-                            logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
-                        }
-                        catch (Exception ex)
+                        Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+
+                        using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
+
+                        // GitHub artifacts accessed via REST API require token auth
+                        if (!string.IsNullOrEmpty(req.GitHubToken))
                         {
-                            logger.LogError(ex, "Failed to create symbolic link");
+                            httpClient.DefaultRequestHeaders.Authorization =
+                                new AuthenticationHeaderValue("Bearer", req.GitHubToken);
                         }
+
+                        await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
+
+                        await using (FileStream file = File.Create(absolutePath))
+                        {
+                            await stream.CopyToAsync(file, ct);
+                        }
+
+                        bool isGitHubArtifact = !string.IsNullOrEmpty(req.GitHubToken);
+                        bool isZip;
+                        await using (FileStream probe = File.OpenRead(absolutePath))
+                        {
+                            isZip = IsZipFile(probe);
+                        }
+
+                        // GitHub Actions artifacts are always a zip. Unpack into the build
+                        // directory so in-archive paths (e.g. bin/ControlApp.exe) become public
+                        // URLs, then drop the container zip. AppVeyor uploads stay as-is.
+                        if (isGitHubArtifact && isZip)
+                        {
+                            await ExtractGitHubZipToTarget(absolutePath, absoluteTargetPath, hookCfg, ct);
+                            TryDeleteFile(absolutePath);
+                        }
+                        else if (hookCfg.StoreMetaData)
+                        {
+                            await using FileStream readStream = File.OpenRead(absolutePath);
+                            if (IsZipFile(readStream))
+                            {
+                                await ExtractZipPeMetadata(absolutePath, artifact.FileName, hookCfg, ct);
+                            }
+                            else if (IsPEFile(readStream))
+                            {
+                                await WritePeMetadataSidecarForFile(readStream, absolutePath, ct);
+                            }
+                        }
+
+                        result.RecordArtifactSuccess();
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
+                        result.RecordArtifactFailure($"Failed to copy {artifact.FileName} to disk: {ex.Message}");
                     }
                 }
 
-                try
+                // updates the "latest" special directory symlink with the most up-to-date target
+                if (!string.IsNullOrEmpty(hookCfg.TargetPathTemplate))
                 {
-                    await CreateTimestampFile(absoluteTargetPath);
-                }
-                catch (Exception ex)
-                {
-                    logger.LogError(ex, "Failed to create timestamp file");
+                    if (!string.IsNullOrEmpty(hookCfg.LatestSymlinkTemplate))
+                    {
+                        string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
+                        if (!TryResolveUnderRoot(hookCfg.RootDirectory, latestSubDirectory,
+                                out string absoluteSymlinkPath))
+                        {
+                            logger.LogError(
+                                "Expanded symlink path {Path} is rooted or escapes RootDirectory {Root}",
+                                latestSubDirectory, hookCfg.RootDirectory);
+                            result.RecordError(
+                                $"Expanded symlink path {latestSubDirectory} is rooted or escapes RootDirectory");
+                        }
+                        else
+                        {
+                            try
+                            {
+                                if (Directory.Exists(absoluteSymlinkPath))
+                                {
+                                    Directory.Delete(absoluteSymlinkPath);
+                                }
+
+                                DirectoryInfo linkInfo = (DirectoryInfo)Directory.CreateSymbolicLink(
+                                    absoluteSymlinkPath, absoluteTargetPath);
+                                logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+                            }
+                            catch (Exception ex)
+                            {
+                                logger.LogError(ex, "Failed to create symbolic link");
+                                result.RecordError($"Failed to create symbolic link: {ex.Message}");
+                            }
+                        }
+                    }
+
+                    try
+                    {
+                        await CreateTimestampFile(absoluteTargetPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to create timestamp file");
+                        result.RecordError($"Failed to create timestamp file: {ex.Message}");
+                    }
                 }
             }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed to process webhook request");
+                result.RecordError($"Failed to process webhook request: {ex.Message}");
+            }
+        }
+        finally
+        {
+            CancellationTokenSource notifyCts = new(DiscordWebhookNotifier.RequestTimeout);
+            _ = NotifyDiscordAsync(notifyCts, hookCfg.DiscordWebhookUrls, req, result);
+        }
+    }
+
+    private async Task NotifyDiscordAsync(
+        CancellationTokenSource notifyCts,
+        IEnumerable<string> webhookUrls,
+        WebhookRequest req,
+        JobProcessingResult result)
+    {
+        try
+        {
+            await discordNotifier.NotifyAsync(webhookUrls, req, result, notifyCts.Token);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Failed to process webhook request");
+            logger.LogWarning(ex, "Failed to deliver Discord notification");
+        }
+        finally
+        {
+            notifyCts.Dispose();
         }
     }
 

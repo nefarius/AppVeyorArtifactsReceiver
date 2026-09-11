@@ -22,4 +22,8 @@
         <PackageReference Include="Serilog.Enrichers.Sensitive" Version="2.1.0" />
     </ItemGroup>
 
+    <ItemGroup>
+        <InternalsVisibleTo Include="AppVeyorArtifactsReceiver.Tests" />
+    </ItemGroup>
+
 </Project>

@@ -8,7 +8,7 @@ FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 COPY ["src/AppVeyorArtifactsReceiver.csproj", "."]
 RUN dotnet restore "./AppVeyorArtifactsReceiver.csproj"
-COPY . .
+COPY src/. .
 WORKDIR "/src/."
 RUN dotnet build "AppVeyorArtifactsReceiver.csproj" -c Release -o /app/build
 
