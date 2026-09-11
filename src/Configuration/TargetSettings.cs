@@ -46,4 +46,10 @@ public sealed class TargetSettings
     ///     Zero uses the built-in default (256 MiB).
     /// </summary>
     public long ZipMaxEntryBytes { get; set; }
+
+    /// <summary>
+    ///     Optional Discord incoming-webhook URLs that receive one summary after this target finishes
+    ///     processing a job. Empty by default. Treat each URL as a secret.
+    /// </summary>
+    public List<string> DiscordWebhookUrls { get; set; } = [];
 }
