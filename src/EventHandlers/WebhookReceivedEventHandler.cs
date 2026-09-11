@@ -210,9 +210,28 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
         finally
         {
-            using CancellationTokenSource notifyCts =
-                new(DiscordWebhookNotifier.RequestTimeout);
-            await discordNotifier.NotifyAsync(hookCfg.DiscordWebhookUrls, req, result, notifyCts.Token);
+            CancellationTokenSource notifyCts = new(DiscordWebhookNotifier.RequestTimeout);
+            _ = NotifyDiscordAsync(notifyCts, hookCfg.DiscordWebhookUrls, req, result);
+        }
+    }
+
+    private async Task NotifyDiscordAsync(
+        CancellationTokenSource notifyCts,
+        IEnumerable<string> webhookUrls,
+        WebhookRequest req,
+        JobProcessingResult result)
+    {
+        try
+        {
+            await discordNotifier.NotifyAsync(webhookUrls, req, result, notifyCts.Token);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to deliver Discord notification");
+        }
+        finally
+        {
+            notifyCts.Dispose();
         }
     }
 
