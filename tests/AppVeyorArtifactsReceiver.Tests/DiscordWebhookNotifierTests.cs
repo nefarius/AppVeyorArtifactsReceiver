@@ -96,6 +96,50 @@ public sealed class DiscordWebhookNotifierTests
     }
 
     [Fact]
+    public async Task NotifyAsync_retries_after_every_webhook_delivery_fails()
+    {
+        RecordingHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        DiscordWebhookNotifier notifier = CreateNotifier(handler);
+        WebhookRequest request = CreateGitHubRequest("33663544790");
+        JobProcessingResult result = CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251");
+        string[] urls = ["https://discord.com/api/webhooks/1/token"];
+
+        await notifier.NotifyAsync(urls, request, result, CancellationToken.None);
+        await notifier.NotifyAsync(urls, request, CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251"),
+            CancellationToken.None);
+
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task NotifyAsync_keeps_the_claim_when_any_webhook_succeeds()
+    {
+        RecordingHandler handler = new(request =>
+        {
+            if (request.RequestUri!.AbsoluteUri.Contains("/1/", StringComparison.Ordinal))
+            {
+                throw new HttpRequestException("webhook rejected");
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+        DiscordWebhookNotifier notifier = CreateNotifier(handler);
+        WebhookRequest request = CreateGitHubRequest("33663544790");
+        JobProcessingResult result = CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251");
+        string[] urls =
+        [
+            "https://discord.com/api/webhooks/1/fail",
+            "https://discord.com/api/webhooks/2/ok"
+        ];
+
+        await notifier.NotifyAsync(urls, request, result, CancellationToken.None);
+        await notifier.NotifyAsync(urls, request, CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251"),
+            CancellationToken.None);
+
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
     public async Task NotifyAsync_skips_a_second_post_for_the_same_run_and_target()
     {
         RecordingHandler handler = new();

@@ -12,6 +12,7 @@ namespace AppVeyorArtifactsReceiver.Notifications;
 /// <summary>
 ///     Posts one job-summary embed to every configured Discord incoming-webhook URL.
 ///     Delivery is best-effort and never throws to the caller.
+///     Duplicate suppression is in-process only; production should run a single receiver.
 /// </summary>
 internal sealed class DiscordWebhookNotifier(
     IHttpClientFactory httpClientFactory,
@@ -41,27 +42,43 @@ internal sealed class DiscordWebhookNotifier(
             return;
         }
 
-        if (!TryClaimNotification(request, result))
+        if (!TryClaimNotification(request, result, out DedupeClaim claim))
         {
             logger.LogInformation("Skipping duplicate Discord notification for this run and target");
             return;
         }
 
-        byte[] body = Encoding.UTF8.GetBytes(
-            DiscordNotificationBuilder.Serialize(
-                DiscordNotificationBuilder.Build(request, result, publicArtifactsBaseUrl)));
-
-        using HttpClient client = httpClientFactory.CreateClient(HttpClientName);
-        Task[] posts = new Task[urls.Count];
-        for (int i = 0; i < urls.Count; i++)
+        bool delivered = false;
+        try
         {
-            posts[i] = PostAsync(client, urls[i], i + 1, body, ct);
-        }
+            byte[] body = Encoding.UTF8.GetBytes(
+                DiscordNotificationBuilder.Serialize(
+                    DiscordNotificationBuilder.Build(request, result, publicArtifactsBaseUrl)));
 
-        await Task.WhenAll(posts);
+            using HttpClient client = httpClientFactory.CreateClient(HttpClientName);
+            Task<bool>[] posts = new Task<bool>[urls.Count];
+            for (int i = 0; i < urls.Count; i++)
+            {
+                posts[i] = PostAsync(client, urls[i], i + 1, body, ct);
+            }
+
+            bool[] outcomes = await Task.WhenAll(posts);
+            delivered = Array.Exists(outcomes, static ok => ok);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to prepare or deliver Discord notification");
+        }
+        finally
+        {
+            if (!delivered)
+            {
+                ReleaseClaim(claim);
+            }
+        }
     }
 
-    private async Task PostAsync(
+    private async Task<bool> PostAsync(
         HttpClient client,
         string url,
         int index,
@@ -79,11 +96,15 @@ internal sealed class DiscordWebhookNotifier(
                 logger.LogWarning(
                     "Discord notification {Index} returned HTTP {StatusCode}",
                     index, (int)response.StatusCode);
+                return false;
             }
+
+            return true;
         }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Failed to deliver Discord notification {Index}", index);
+            return false;
         }
     }
 
@@ -123,8 +144,9 @@ internal sealed class DiscordWebhookNotifier(
         return request.EnvironmentVariables.TryGetValue(key, out string? value) ? value : null;
     }
 
-    private bool TryClaimNotification(WebhookRequest request, JobProcessingResult result)
+    private bool TryClaimNotification(WebhookRequest request, JobProcessingResult result, out DedupeClaim claim)
     {
+        claim = default;
         string? key = TryCreateDedupeKey(request, result);
         if (key is null)
         {
@@ -146,6 +168,7 @@ internal sealed class DiscordWebhookNotifier(
 
                 if (_recentNotifications.TryUpdate(key, now, previous))
                 {
+                    claim = new DedupeClaim(key, now);
                     return true;
                 }
 
@@ -154,9 +177,20 @@ internal sealed class DiscordWebhookNotifier(
 
             if (_recentNotifications.TryAdd(key, now))
             {
+                claim = new DedupeClaim(key, now);
                 return true;
             }
         }
+    }
+
+    private void ReleaseClaim(DedupeClaim claim)
+    {
+        if (claim.Key is null)
+        {
+            return;
+        }
+
+        _recentNotifications.TryRemove(new KeyValuePair<string, long>(claim.Key, claim.ClaimedAt));
     }
 
     private void EvictExpired(long now, long window)
@@ -183,4 +217,6 @@ internal sealed class DiscordWebhookNotifier(
             .Distinct(StringComparer.Ordinal)
             .ToList();
     }
+
+    private readonly record struct DedupeClaim(string? Key, long ClaimedAt);
 }
