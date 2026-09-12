@@ -30,6 +30,7 @@ public sealed class DiscordNotificationBuilderTests
         Assert.Equal("master", Field(embed, "Branch"));
         Assert.Equal("abcdef0", Field(embed, "Commit"));
         Assert.Equal("2 succeeded, 0 failed", Field(embed, "Artifacts"));
+        Assert.DoesNotContain("- ", Field(embed, "Artifacts"), StringComparison.Ordinal);
         Assert.Equal("builds/DsHidMini/master/1.2.3", Field(embed, "Target"));
         Assert.DoesNotContain(embed.Fields, field => field.Name == "Errors");
     }
@@ -81,6 +82,29 @@ public sealed class DiscordNotificationBuilderTests
         Assert.Equal(
             "[0123456](https://github.com/nefarius/DsHidMini/commit/0123456789abcdef0123456789abcdef01234567)",
             Field(embed, "Commit"));
+    }
+
+    [Fact]
+    public void Artifacts_field_lists_file_names()
+    {
+        WebhookRequest request = CreateAppVeyorRequest();
+        request.Artifacts =
+        [
+            new Artifact { FileName = "control-app.zip" },
+            new Artifact { FileName = "dshidmini_3.7.2.cab" }
+        ];
+        JobProcessingResult result = new()
+        {
+            TargetSubDirectory = "builds/DsHidMini/v3.7.2/251"
+        };
+        result.RecordArtifactSuccess();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal(
+            "2 succeeded, 0 failed\n- control-app.zip\n- dshidmini_3.7.2.cab",
+            Field(embed, "Artifacts"));
     }
 
     [Fact]
