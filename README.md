@@ -167,7 +167,7 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor PE metadata). Use `0` for the built-in default (**8192**). |
 | `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to extract or load for parsing. Use `0` for the built-in default (**256 MiB**). |
 | `DiscordWebhookUrls` | Optional. Array of Discord incoming-webhook URLs for this target. After each job the receiver POSTs one summary embed (project/repository, build, branch, abbreviated commit, artifact counts, target subdirectory, and error details). A job is successful only when processing recorded no error-level failures (empty artifact sets, path escapes, download/copy failures, symlink/timestamp failures, and unhandled exceptions). Warning-only ZIP/PE skips stay non-fatal. Omit or use `[]` to disable. Treat each URL as a secret. |
-| `PublicArtifactsBaseUrl` | Optional. Public HTTP(S) origin that maps to `RootDirectory` (for example `https://artifacts.example.com`). When set, Discord summaries link the target subdirectory under this base. Branch and commit are also linked when the job is identifiable as GitHub-hosted. Omit to keep those values as plain text. |
+| `PublicArtifactsBaseUrl` | Optional. Public HTTP(S) origin that maps to `RootDirectory` (for example `https://artifacts.example.com`). When set, Discord summaries link the target subdirectory under this base. Omit it to keep **only the target path** as plain text. Branch and commit links are generated independently when the job has valid GitHub repository metadata. |
 
 ### Path placeholders
 
@@ -190,6 +190,7 @@ The bundled action always sends a native `github_*` catalog **and** three AppVey
 | `{github_repository}` | `GITHUB_REPOSITORY` | `owner/name` — contains `/` |
 | `{github_ref}` | `GITHUB_REF` | e.g. `refs/heads/master` — contains `/` |
 | `{github_ref_name}` | `GITHUB_REF_NAME` | Branch or tag name; unmerged PRs are `<pr_number>/merge` and contain `/` |
+| `{github_head_ref}` | `GITHUB_HEAD_REF` | Source branch of a pull request; empty on `push` and other non-PR events |
 | `{github_ref_type}` | `GITHUB_REF_TYPE` | `branch` or `tag` |
 | `{github_sha}` | `GITHUB_SHA` | Commit SHA for the run |
 | `{github_workflow}` | `GITHUB_WORKFLOW` | Workflow name (may contain spaces or `/`) |

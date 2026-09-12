@@ -103,6 +103,7 @@ internal static class DiscordNotificationBuilder
     {
         return FirstNonEmpty(
             request.Branch,
+            GetEnv(request, "github_head_ref"),
             GetEnv(request, "github_ref_name"),
             GetEnv(request, "appveyor_repo_branch")) ?? "unknown";
     }
@@ -276,7 +277,8 @@ internal static class DiscordNotificationBuilder
             return label;
         }
 
-        return $"[{label}]({url})";
+        string link = $"[{label}]({url})";
+        return link.Length > 1024 ? label : link;
     }
 
     private static string? GetEnv(WebhookRequest request, string key)

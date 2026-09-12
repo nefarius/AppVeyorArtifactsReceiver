@@ -183,6 +183,41 @@ public sealed class DiscordNotificationBuilderTests
     }
 
     [Fact]
+    public void ResolveBranch_prefers_github_head_ref_over_ref_name()
+    {
+        WebhookRequest request = new()
+        {
+            Artifacts = [],
+            EnvironmentVariables = new Dictionary<string, string>
+            {
+                ["github_repository"] = "nefarius/DsHidMini",
+                ["github_head_ref"] = "feat/clickable-links",
+                ["github_ref_name"] = "42/merge",
+                ["github_sha"] = "abcdef0123456789"
+            }
+        };
+        JobProcessingResult result = new();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal(
+            "[feat/clickable-links](https://github.com/nefarius/DsHidMini/tree/feat/clickable-links)",
+            Field(embed, "Branch"));
+    }
+
+    [Fact]
+    public void Oversized_target_markdown_link_falls_back_to_label()
+    {
+        string label = new('a', 496);
+        string value = Field(EmbedWithTarget(label, "https://artifacts.example.com"), "Target");
+
+        Assert.Equal(label, value);
+        Assert.DoesNotContain("[", value, StringComparison.Ordinal);
+        Assert.DoesNotContain("](", value, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Field_value_of_1024_characters_is_kept()
     {
         string raw = new('a', 1024);
