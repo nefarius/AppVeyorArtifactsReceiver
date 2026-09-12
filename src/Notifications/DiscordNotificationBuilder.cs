@@ -1,4 +1,5 @@
 #nullable enable
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 
@@ -19,7 +20,10 @@ internal static class DiscordNotificationBuilder
         PropertyNamingPolicy = null
     };
 
-    public static DiscordWebhookPayload Build(WebhookRequest request, JobProcessingResult result)
+    public static DiscordWebhookPayload Build(
+        WebhookRequest request,
+        JobProcessingResult result,
+        string? publicArtifactsBaseUrl = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(result);
@@ -41,11 +45,11 @@ internal static class DiscordNotificationBuilder
             [
                 Field("Project", ResolveProject(request), inline: true),
                 Field("Build", ResolveBuild(request), inline: true),
-                Field("Branch", ResolveBranch(request), inline: true),
-                Field("Commit", AbbreviateCommit(ResolveCommit(request)), inline: true),
+                Field("Branch", FormatBranch(request), inline: true),
+                Field("Commit", FormatCommit(request), inline: true),
                 Field("Artifacts", $"{result.ArtifactsSucceeded} succeeded, {result.ArtifactsFailed} failed",
                     inline: true),
-                Field("Target", DisplayOrUnknown(result.TargetSubDirectory), inline: true)
+                Field("Target", FormatTarget(result.TargetSubDirectory, publicArtifactsBaseUrl), inline: true)
             ]
         };
 
@@ -99,6 +103,7 @@ internal static class DiscordNotificationBuilder
     {
         return FirstNonEmpty(
             request.Branch,
+            GetEnv(request, "github_head_ref"),
             GetEnv(request, "github_ref_name"),
             GetEnv(request, "appveyor_repo_branch")) ?? "unknown";
     }
@@ -109,6 +114,171 @@ internal static class DiscordNotificationBuilder
             request.CommitId,
             GetEnv(request, "github_sha"),
             GetEnv(request, "appveyor_repo_commit")) ?? "unknown";
+    }
+
+    private static string FormatTarget(string? relativePath, string? publicArtifactsBaseUrl)
+    {
+        string label = DisplayOrUnknown(relativePath);
+        return TryCreatePublicTargetUrl(publicArtifactsBaseUrl, relativePath, out string? url)
+            ? MarkdownLink(label, url)
+            : label;
+    }
+
+    private static string FormatBranch(WebhookRequest request)
+    {
+        string branch = ResolveBranch(request);
+        return TryCreateGitHubUrl(request, "tree", branch, out string? url)
+            ? MarkdownLink(branch, url)
+            : branch;
+    }
+
+    private static string FormatCommit(WebhookRequest request)
+    {
+        string commit = ResolveCommit(request);
+        string label = AbbreviateCommit(commit);
+        if (!LooksLikeCommitSha(commit) ||
+            !TryCreateGitHubUrl(request, "commit", commit, out string? url))
+        {
+            return label;
+        }
+
+        return MarkdownLink(label, url);
+    }
+
+    private static bool TryCreatePublicTargetUrl(
+        string? publicArtifactsBaseUrl,
+        string? relativePath,
+        [NotNullWhen(true)] out string? url)
+    {
+        url = null;
+        if (string.IsNullOrWhiteSpace(publicArtifactsBaseUrl) ||
+            string.IsNullOrWhiteSpace(relativePath) ||
+            !TryGetSafeRelativeSegments(relativePath, out string[] segments) ||
+            !Uri.TryCreate(publicArtifactsBaseUrl.Trim(), UriKind.Absolute, out Uri? baseUri) ||
+            (baseUri.Scheme != Uri.UriSchemeHttp && baseUri.Scheme != Uri.UriSchemeHttps))
+        {
+            return false;
+        }
+
+        try
+        {
+            var builder = new UriBuilder(baseUri)
+            {
+                Query = string.Empty,
+                Fragment = string.Empty
+            };
+            string basePath = builder.Path.TrimEnd('/');
+            if (basePath == "/")
+            {
+                basePath = string.Empty;
+            }
+
+            builder.Path = basePath + "/" + string.Join('/', segments.Select(Uri.EscapeDataString));
+            url = builder.Uri.AbsoluteUri;
+            return true;
+        }
+        catch (UriFormatException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryCreateGitHubUrl(
+        WebhookRequest request,
+        string kind,
+        string resource,
+        [NotNullWhen(true)] out string? url)
+    {
+        url = null;
+        if (!TryResolveGitHubRepository(request, out string? owner, out string? repo) ||
+            !TryGetSafeRelativeSegments(resource, out string[] segments))
+        {
+            return false;
+        }
+
+        url = $"https://github.com/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/{kind}/" +
+              string.Join('/', segments.Select(Uri.EscapeDataString));
+        return true;
+    }
+
+    private static bool TryResolveGitHubRepository(
+        WebhookRequest request,
+        [NotNullWhen(true)] out string? owner,
+        [NotNullWhen(true)] out string? repo)
+    {
+        owner = null;
+        repo = null;
+
+        if (TryParseOwnerRepo(GetEnv(request, "github_repository"), out owner, out repo))
+        {
+            return true;
+        }
+
+        string? provider = GetEnv(request, "appveyor_repo_provider");
+        if (!string.Equals(provider, "github", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return TryParseOwnerRepo(
+            FirstNonEmpty(request.RepositoryName, GetEnv(request, "appveyor_repo_name")),
+            out owner,
+            out repo);
+    }
+
+    private static bool TryParseOwnerRepo(
+        string? slug,
+        [NotNullWhen(true)] out string? owner,
+        [NotNullWhen(true)] out string? repo)
+    {
+        owner = null;
+        repo = null;
+        if (string.IsNullOrWhiteSpace(slug))
+        {
+            return false;
+        }
+
+        string[] parts = slug.Trim().Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 ||
+            parts.Any(part => part is "." or ".." || part.IndexOfAny(['\\', ':']) >= 0))
+        {
+            return false;
+        }
+
+        owner = parts[0];
+        repo = parts[1];
+        return true;
+    }
+
+    private static bool TryGetSafeRelativeSegments(string value, out string[] segments)
+    {
+        string normalized = value.Replace('\\', '/').Trim();
+        if (string.IsNullOrEmpty(normalized) ||
+            Path.IsPathRooted(normalized) ||
+            normalized.Contains(':', StringComparison.Ordinal))
+        {
+            segments = [];
+            return false;
+        }
+
+        segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        return segments.Length > 0 && Array.TrueForAll(segments, segment => segment is not "." and not "..");
+    }
+
+    private static bool LooksLikeCommitSha(string commit)
+    {
+        return commit.Length >= 7 && commit.All(Uri.IsHexDigit);
+    }
+
+    private static string MarkdownLink(string label, string url)
+    {
+        if (label.IndexOfAny(['[', ']']) >= 0)
+        {
+            return label;
+        }
+
+        string link = $"[{label}]({url})";
+        return link.Length > 1024 ? label : link;
     }
 
     private static string? GetEnv(WebhookRequest request, string key)

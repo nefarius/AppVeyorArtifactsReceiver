@@ -52,4 +52,10 @@ public sealed class TargetSettings
     ///     processing a job. Empty by default. Treat each URL as a secret.
     /// </summary>
     public List<string> DiscordWebhookUrls { get; set; } = [];
+
+    /// <summary>
+    ///     Optional public HTTP origin that maps to <see cref="RootDirectory" />. When set, Discord
+    ///     summaries link the target subdirectory under this base URL. Omit to keep a plain-text path.
+    /// </summary>
+    public string? PublicArtifactsBaseUrl { get; set; }
 }

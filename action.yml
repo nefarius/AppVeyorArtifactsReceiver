@@ -115,6 +115,7 @@ runs:
               github_repository: repositoryFullName,
               github_ref: process.env.GITHUB_REF || '',
               github_ref_name: process.env.GITHUB_REF_NAME || '',
+              github_head_ref: process.env.GITHUB_HEAD_REF || '',
               github_ref_type: process.env.GITHUB_REF_TYPE || '',
               github_sha: process.env.GITHUB_SHA || context.sha || '',
               github_workflow: process.env.GITHUB_WORKFLOW || context.workflow || '',

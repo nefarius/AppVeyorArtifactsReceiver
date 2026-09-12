@@ -76,8 +76,145 @@ public sealed class DiscordNotificationBuilderTests
         Assert.Equal("Artifact processing failed", embed.Title);
         Assert.Equal("nefarius/DsHidMini", Field(embed, "Project"));
         Assert.Equal("88", Field(embed, "Build"));
-        Assert.Equal("feat/discord", Field(embed, "Branch"));
-        Assert.Equal("0123456", Field(embed, "Commit"));
+        Assert.Equal("[feat/discord](https://github.com/nefarius/DsHidMini/tree/feat/discord)",
+            Field(embed, "Branch"));
+        Assert.Equal(
+            "[0123456](https://github.com/nefarius/DsHidMini/commit/0123456789abcdef0123456789abcdef01234567)",
+            Field(embed, "Commit"));
+    }
+
+    [Fact]
+    public void Target_is_linked_when_public_base_url_is_configured()
+    {
+        DiscordEmbed embed = EmbedWithTarget(
+            "builds/DsHidMini/master/1.2.3",
+            "https://artifacts.example.com/");
+
+        Assert.Equal(
+            "[builds/DsHidMini/master/1.2.3](https://artifacts.example.com/builds/DsHidMini/master/1.2.3)",
+            Field(embed, "Target"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("not-a-url")]
+    [InlineData("ftp://artifacts.example.com")]
+    [InlineData("javascript:alert(1)")]
+    public void Target_stays_plain_text_when_public_base_url_is_missing_or_invalid(string? baseUrl)
+    {
+        DiscordEmbed embed = EmbedWithTarget("builds/DsHidMini/master/1.2.3", baseUrl);
+
+        Assert.Equal("builds/DsHidMini/master/1.2.3", Field(embed, "Target"));
+    }
+
+    [Fact]
+    public void Target_link_encodes_unsafe_path_segments()
+    {
+        DiscordEmbed embed = EmbedWithTarget(
+            "builds/My App/release 1.0",
+            "https://artifacts.example.com");
+
+        Assert.Equal(
+            "[builds/My App/release 1.0](https://artifacts.example.com/builds/My%20App/release%201.0)",
+            Field(embed, "Target"));
+    }
+
+    [Fact]
+    public void AppVeyor_github_provider_links_branch_and_full_commit()
+    {
+        WebhookRequest request = CreateAppVeyorRequest();
+        request.EnvironmentVariables = new Dictionary<string, string>
+        {
+            ["appveyor_repo_provider"] = "gitHub"
+        };
+        JobProcessingResult result = new()
+        {
+            TargetSubDirectory = "builds/DsHidMini/master/1.2.3"
+        };
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal("[master](https://github.com/nefarius/DsHidMini/tree/master)", Field(embed, "Branch"));
+        Assert.Equal("[abcdef0](https://github.com/nefarius/DsHidMini/commit/abcdef0123456789)",
+            Field(embed, "Commit"));
+        Assert.Contains("/commit/abcdef0123456789)", Field(embed, "Commit"));
+    }
+
+    [Fact]
+    public void Unsupported_provider_keeps_branch_and_commit_as_text()
+    {
+        WebhookRequest request = CreateAppVeyorRequest();
+        request.EnvironmentVariables = new Dictionary<string, string>
+        {
+            ["appveyor_repo_provider"] = "bitBucket"
+        };
+        JobProcessingResult result = new();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal("master", Field(embed, "Branch"));
+        Assert.Equal("abcdef0", Field(embed, "Commit"));
+    }
+
+    [Fact]
+    public void Branch_link_encodes_ref_segments()
+    {
+        WebhookRequest request = new()
+        {
+            Artifacts = [],
+            EnvironmentVariables = new Dictionary<string, string>
+            {
+                ["github_repository"] = "nefarius/DsHidMini",
+                ["github_ref_name"] = "release 1.0",
+                ["github_sha"] = "abcdef0123456789"
+            }
+        };
+        JobProcessingResult result = new();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal("[release 1.0](https://github.com/nefarius/DsHidMini/tree/release%201.0)",
+            Field(embed, "Branch"));
+    }
+
+    [Fact]
+    public void ResolveBranch_prefers_github_head_ref_over_ref_name()
+    {
+        WebhookRequest request = new()
+        {
+            Artifacts = [],
+            EnvironmentVariables = new Dictionary<string, string>
+            {
+                ["github_repository"] = "nefarius/DsHidMini",
+                ["github_head_ref"] = "feat/clickable-links",
+                ["github_ref_name"] = "42/merge",
+                ["github_sha"] = "abcdef0123456789"
+            }
+        };
+        JobProcessingResult result = new();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal(
+            "[feat/clickable-links](https://github.com/nefarius/DsHidMini/tree/feat/clickable-links)",
+            Field(embed, "Branch"));
+    }
+
+    [Fact]
+    public void Oversized_target_markdown_link_falls_back_to_label()
+    {
+        string label = new('a', 496);
+        string value = Field(EmbedWithTarget(label, "https://artifacts.example.com"), "Target");
+
+        Assert.Equal(label, value);
+        Assert.DoesNotContain("[", value, StringComparison.Ordinal);
+        Assert.DoesNotContain("](", value, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -117,7 +254,7 @@ public sealed class DiscordNotificationBuilderTests
             document.RootElement.GetProperty("embeds")[0].GetProperty("color").GetInt32());
     }
 
-    private static DiscordEmbed EmbedWithTarget(string target)
+    private static DiscordEmbed EmbedWithTarget(string target, string? publicArtifactsBaseUrl = null)
     {
         WebhookRequest request = CreateAppVeyorRequest();
         JobProcessingResult result = new()
@@ -125,7 +262,7 @@ public sealed class DiscordNotificationBuilderTests
             TargetSubDirectory = target
         };
         result.RecordArtifactSuccess();
-        return Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+        return Assert.Single(DiscordNotificationBuilder.Build(request, result, publicArtifactsBaseUrl).Embeds);
     }
 
     private static string Field(DiscordEmbed embed, string name)

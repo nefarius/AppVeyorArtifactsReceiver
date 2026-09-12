@@ -211,19 +211,21 @@ internal sealed partial class WebhookReceivedEventHandler(
         finally
         {
             CancellationTokenSource notifyCts = new(DiscordWebhookNotifier.RequestTimeout);
-            _ = NotifyDiscordAsync(notifyCts, hookCfg.DiscordWebhookUrls, req, result);
+            _ = NotifyDiscordAsync(notifyCts, hookCfg.DiscordWebhookUrls, hookCfg.PublicArtifactsBaseUrl, req, result);
         }
     }
 
     private async Task NotifyDiscordAsync(
         CancellationTokenSource notifyCts,
         IEnumerable<string> webhookUrls,
+        string publicArtifactsBaseUrl,
         WebhookRequest req,
         JobProcessingResult result)
     {
         try
         {
-            await discordNotifier.NotifyAsync(webhookUrls, req, result, notifyCts.Token);
+            await discordNotifier.NotifyAsync(
+                webhookUrls, req, result, notifyCts.Token, publicArtifactsBaseUrl);
         }
         catch (Exception ex)
         {
