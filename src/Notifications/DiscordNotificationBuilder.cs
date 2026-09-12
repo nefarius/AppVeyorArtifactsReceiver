@@ -47,8 +47,7 @@ internal static class DiscordNotificationBuilder
                 Field("Build", ResolveBuild(request), inline: true),
                 Field("Branch", FormatBranch(request), inline: true),
                 Field("Commit", FormatCommit(request), inline: true),
-                Field("Artifacts", $"{result.ArtifactsSucceeded} succeeded, {result.ArtifactsFailed} failed",
-                    inline: true),
+                Field("Artifacts", FormatArtifacts(request, result), inline: true),
                 Field("Target", FormatTarget(result.TargetSubDirectory, publicArtifactsBaseUrl), inline: true)
             ]
         };
@@ -114,6 +113,24 @@ internal static class DiscordNotificationBuilder
             request.CommitId,
             GetEnv(request, "github_sha"),
             GetEnv(request, "appveyor_repo_commit")) ?? "unknown";
+    }
+
+    private static string FormatArtifacts(WebhookRequest request, JobProcessingResult result)
+    {
+        string summary = $"{result.ArtifactsSucceeded} succeeded, {result.ArtifactsFailed} failed";
+        IEnumerable<string> names = (request.Artifacts ?? [])
+            .Select(artifact => FirstNonEmpty(artifact.FileName, artifact.Name))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!)
+            .Distinct(StringComparer.Ordinal);
+
+        var builder = new StringBuilder(summary);
+        foreach (string name in names)
+        {
+            builder.Append('\n').Append("- ").Append(name);
+        }
+
+        return builder.ToString();
     }
 
     private static string FormatTarget(string? relativePath, string? publicArtifactsBaseUrl)
