@@ -23,7 +23,7 @@ Use one receiver for either CI, or both at once (give each provider its own webh
 - **Executable metadata** — When `StoreMetaData` is enabled, Win32 version resource data (`FileVersion`, `ProductVersion`) is extracted from PE files (`.exe`, `.dll`, and similar) and written to hidden sidecar JSON next to the file (e.g. `.MyApp.exe.json`) for auto-updaters and other tools.
 - **GitHub Actions zip extraction** — Requests that send `X-GitHub-Token` download a zip (`actions/upload-artifact`). The receiver unpacks that zip into the build directory (preserving in-archive paths, zip-slip checked), writes PE sidecars next to extracted executables, and deletes the container zip. Nested zips are left as files. AppVeyor uploads are not unpacked.
 - **ZIP artifact metadata** — If an AppVeyor artifact is itself a ZIP (no GitHub token), PE metadata is scanned inside the archive without extracting it: entries are scanned up to a configurable limit, oversized entries are skipped, paths are validated (including zip-slip checks), and PEs without a typical extension are detected via the MZ header. Sidecars are stored under a hidden tree rooted at `.{sanitized_zip_basename}/`, mirroring the in-archive path (each directory segment is stored as a hidden segment; each file gets a `.filename.json` sidecar in the corresponding mirrored folder).
-- **Discord notifications** — Optional per-webhook Discord incoming-webhook URLs receive one embed after a job finishes: green on full success, red on failure or partial artifact failure. Delivery is best-effort and does not change HTTP acceptance.
+- **Discord notifications** — Optional per-webhook Discord incoming-webhook URLs receive one embed after a job finishes: green on full success, red on failure or partial artifact failure. When `PublicArtifactsBaseUrl` is set, the target folder is a clickable link; GitHub-hosted jobs also link branch and commit. Delivery is best-effort and does not change HTTP acceptance.
 
 ## Quick start
 
@@ -167,6 +167,7 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor PE metadata). Use `0` for the built-in default (**8192**). |
 | `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to extract or load for parsing. Use `0` for the built-in default (**256 MiB**). |
 | `DiscordWebhookUrls` | Optional. Array of Discord incoming-webhook URLs for this target. After each job the receiver POSTs one summary embed (project/repository, build, branch, abbreviated commit, artifact counts, target subdirectory, and error details). A job is successful only when processing recorded no error-level failures (empty artifact sets, path escapes, download/copy failures, symlink/timestamp failures, and unhandled exceptions). Warning-only ZIP/PE skips stay non-fatal. Omit or use `[]` to disable. Treat each URL as a secret. |
+| `PublicArtifactsBaseUrl` | Optional. Public HTTP(S) origin that maps to `RootDirectory` (for example `https://artifacts.example.com`). When set, Discord summaries link the target subdirectory under this base. Branch and commit are also linked when the job is identifiable as GitHub-hosted. Omit to keep those values as plain text. |
 
 ### Path placeholders
 
@@ -244,7 +245,8 @@ Example (also in [src/appsettings.Production.example.json](src/appsettings.Produ
 "LatestSymlinkTemplate": "builds/{appveyor_project_name}/latest",
 "DiscordWebhookUrls": [
   "https://discord.com/api/webhooks/000000000000000000/replace-with-your-webhook-token"
-]
+],
+"PublicArtifactsBaseUrl": "https://artifacts.example.com"
 ```
 
 ## Third-Party Credits

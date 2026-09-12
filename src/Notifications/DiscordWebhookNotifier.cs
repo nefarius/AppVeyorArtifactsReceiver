@@ -24,7 +24,8 @@ internal sealed class DiscordWebhookNotifier(
         IEnumerable<string>? webhookUrls,
         WebhookRequest request,
         JobProcessingResult result,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? publicArtifactsBaseUrl = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(result);
@@ -36,7 +37,8 @@ internal sealed class DiscordWebhookNotifier(
         }
 
         byte[] body = Encoding.UTF8.GetBytes(
-            DiscordNotificationBuilder.Serialize(DiscordNotificationBuilder.Build(request, result)));
+            DiscordNotificationBuilder.Serialize(
+                DiscordNotificationBuilder.Build(request, result, publicArtifactsBaseUrl)));
 
         using HttpClient client = httpClientFactory.CreateClient(HttpClientName);
         Task[] posts = new Task[urls.Count];
