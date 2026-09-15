@@ -17,7 +17,7 @@ Use one receiver for either CI, or both at once (give each provider its own webh
 
 - **Artifact mirroring** — Keep build outputs on your own infrastructure after the upstream CI expires them (AppVeyor retention, GitHub Actions artifact retention, or both).
 - **Provider-aware completion** — AppVeyor webhooks have a short timeout, so the server returns `OK` immediately and downloads in the background. GitHub requests that send `X-GitHub-Token` wait until downloads finish so the short-lived token stays valid.
-- **Latest symlink** — When configured, a symbolic link is created or updated at the path given by `LatestSymlinkTemplate`, pointing at the directory for the current build (derived from `TargetPathTemplate`). Use this for a stable URL to the newest artifacts.
+- **Latest symlink** — When configured, a symbolic link is created or updated at the path given by `LatestSymlinkTemplate`, pointing at the directory for the current build (derived from `TargetPathTemplate`). Use this for a stable URL to the newest artifacts. A single request can skip retargeting by setting `artifacts_receiver_skip_latest_symlink=true` (GitHub Action input `skip-latest-symlink`); artifacts and timestamp files are still written.
 - **Latest timestamp file** — When `TargetPathTemplate` is set, `LAST_UPDATED_AT.txt` is written in the build directory with the ISO 8601 timestamp when each deployment completes, for APIs or scripts to consume (independent of whether `LatestSymlinkTemplate` is configured).
 - **SVG badge** — `LAST_UPDATED_AT.svg` is generated alongside the timestamp file under the same rules.
 - **Executable metadata** — When `StoreMetaData` is enabled, Win32 version resource data (`FileVersion`, `ProductVersion`) is extracted from PE files (`.exe`, `.dll`, and similar) and written to hidden sidecar JSON next to the file (e.g. `.MyApp.exe.json`) for auto-updaters and other tools.
@@ -133,6 +133,17 @@ By default the action sends **every** non-expired artifact from the run. To send
           artifact-name: ${{ github.event.repository.name }}
 ```
 
+To store artifacts without retargeting the `latest` symlink (preview or matrix jobs, for example), set `skip-latest-symlink: true`. Timestamp and badge files are still written. The input must be `true` or `false`; omitted defaults to `false`.
+
+```yml
+      - name: Notify artifacts receiver
+        uses: nefarius/AppVeyorArtifactsReceiver@master
+        with:
+          webhook-url: ${{ secrets.WEBHOOK_URL }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          skip-latest-symlink: true
+```
+
 ## AppVeyor
 
 In AppVeyor, [create a deployment](https://ci.appveyor.com/environments/new) with the **Webhook** provider and point it at `https://ci.example.org/webhooks/<guid>` (the same secret GUID as in `ServiceConfig:Webhooks`).
@@ -154,6 +165,13 @@ deploy:
       appveyor_repo_tag: true
 ```
 
+To keep a preview or matrix job from retargeting `latest`, set `artifacts_receiver_skip_latest_symlink` to `true` in that deployment's environment variables (or in `appveyor.yml`). Artifacts and timestamp files are still written. Omit the variable, or set it to `false`, to keep the default.
+
+```yml
+environment:
+  artifacts_receiver_skip_latest_symlink: true
+```
+
 ## Configuration reference
 
 Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsettings.Production.example.json](src/appsettings.Production.example.json)). Each webhook is keyed by a GUID string matching the URL path `/webhooks/{Id}`.
@@ -161,7 +179,7 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | Property | Description |
 | -------- | ----------- |
 | `TargetPathTemplate` | **Required.** Subdirectory under `RootDirectory` for this build. Use `{placeholder}` tokens; values are taken from the webhook JSON `environmentVariables` object. An unknown placeholder **fails** the request. |
-| `LatestSymlinkTemplate` | Optional. Set this only if you want a `latest`-style symlink: after a successful deployment, the symlink at the expanded path is updated to point at the current build directory (same `{placeholder}` rules as `TargetPathTemplate`). Omit it if you do not need that indirection. |
+| `LatestSymlinkTemplate` | Optional. Set this only if you want a `latest`-style symlink: after a successful deployment, the symlink at the expanded path is updated to point at the current build directory (same `{placeholder}` rules as `TargetPathTemplate`). Omit it if you do not need that indirection. A single request can skip the update by setting `environmentVariables.artifacts_receiver_skip_latest_symlink` to `true` (GitHub Action input `skip-latest-symlink`); timestamp and badge files are still written. Missing, `false`, or malformed values keep this default. |
 | `RootDirectory` | **Required.** Root folder on disk where build trees and metadata are stored (e.g. `/data` in Docker). |
 | `StoreMetaData` | Optional; default `true`. Set `false` to skip PE metadata sidecars for both loose PE files and ZIP contents. |
 | `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor PE metadata). Use `0` for the built-in default (**8192**). |
