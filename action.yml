@@ -26,6 +26,12 @@ inputs:
       every non-expired artifact from the current workflow run is sent.
     required: false
     default: ''
+  skip-latest-symlink:
+    description: >
+      If true, the receiver still downloads artifacts and writes timestamp
+      files but does not retarget the Latest symlink. Must be true or false.
+    required: false
+    default: 'false'
 
 runs:
   using: composite
@@ -36,12 +42,14 @@ runs:
         WEBHOOK_URL: ${{ inputs.webhook-url }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
         ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        SKIP_LATEST_SYMLINK: ${{ inputs.skip-latest-symlink }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           const webhookUrl = (process.env.WEBHOOK_URL || '').trim();
           const token = (process.env.INPUT_GITHUB_TOKEN || '').trim();
           const artifactNameFilter = (process.env.ARTIFACT_NAME || '').trim();
+          const skipLatestSymlinkRaw = (process.env.SKIP_LATEST_SYMLINK || '').trim().toLowerCase();
 
           if (!webhookUrl) {
             core.setFailed('Input webhook-url is required.');
@@ -52,6 +60,13 @@ runs:
             core.setFailed('Input github-token is required.');
             return;
           }
+
+          if (skipLatestSymlinkRaw !== 'true' && skipLatestSymlinkRaw !== 'false') {
+            core.setFailed('Input skip-latest-symlink must be true or false.');
+            return;
+          }
+
+          const skipLatestSymlink = skipLatestSymlinkRaw === 'true';
 
           const { owner, repo } = context.repo;
           const runId = context.runId;
@@ -123,7 +138,8 @@ runs:
               github_actor: process.env.GITHUB_ACTOR || context.actor || '',
               github_run_id: String(context.runId ?? process.env.GITHUB_RUN_ID ?? ''),
               github_run_number: String(context.runNumber ?? process.env.GITHUB_RUN_NUMBER ?? ''),
-              github_run_attempt: String(process.env.GITHUB_RUN_ATTEMPT || '')
+              github_run_attempt: String(process.env.GITHUB_RUN_ATTEMPT || ''),
+              artifacts_receiver_skip_latest_symlink: skipLatestSymlink ? 'true' : 'false'
             }
           };
 

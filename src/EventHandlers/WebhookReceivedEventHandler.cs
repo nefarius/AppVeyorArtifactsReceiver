@@ -160,33 +160,42 @@ internal sealed partial class WebhookReceivedEventHandler(
                 {
                     if (!string.IsNullOrEmpty(hookCfg.LatestSymlinkTemplate))
                     {
-                        string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
-                        if (!TryResolveUnderRoot(hookCfg.RootDirectory, latestSubDirectory,
-                                out string absoluteSymlinkPath))
+                        if (req.ShouldSkipLatestSymlink())
                         {
-                            logger.LogError(
-                                "Expanded symlink path {Path} is rooted or escapes RootDirectory {Root}",
-                                latestSubDirectory, hookCfg.RootDirectory);
-                            result.RecordError(
-                                $"Expanded symlink path {latestSubDirectory} is rooted or escapes RootDirectory");
+                            logger.LogInformation(
+                                "Skipping latest symlink update because {Key} is true",
+                                WebhookRequest.SkipLatestSymlinkEnvironmentVariable);
                         }
                         else
                         {
-                            try
+                            string latestSubDirectory = Replace(hookCfg.LatestSymlinkTemplate, req.EnvironmentVariables);
+                            if (!TryResolveUnderRoot(hookCfg.RootDirectory, latestSubDirectory,
+                                    out string absoluteSymlinkPath))
                             {
-                                if (Directory.Exists(absoluteSymlinkPath))
-                                {
-                                    Directory.Delete(absoluteSymlinkPath);
-                                }
-
-                                DirectoryInfo linkInfo = (DirectoryInfo)Directory.CreateSymbolicLink(
-                                    absoluteSymlinkPath, absoluteTargetPath);
-                                logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+                                logger.LogError(
+                                    "Expanded symlink path {Path} is rooted or escapes RootDirectory {Root}",
+                                    latestSubDirectory, hookCfg.RootDirectory);
+                                result.RecordError(
+                                    $"Expanded symlink path {latestSubDirectory} is rooted or escapes RootDirectory");
                             }
-                            catch (Exception ex)
+                            else
                             {
-                                logger.LogError(ex, "Failed to create symbolic link");
-                                result.RecordError($"Failed to create symbolic link: {ex.Message}");
+                                try
+                                {
+                                    if (Directory.Exists(absoluteSymlinkPath))
+                                    {
+                                        Directory.Delete(absoluteSymlinkPath);
+                                    }
+
+                                    DirectoryInfo linkInfo = (DirectoryInfo)Directory.CreateSymbolicLink(
+                                        absoluteSymlinkPath, absoluteTargetPath);
+                                    logger.LogInformation("Created/updated symbolic link {Link}", linkInfo);
+                                }
+                                catch (Exception ex)
+                                {
+                                    logger.LogError(ex, "Failed to create symbolic link");
+                                    result.RecordError($"Failed to create symbolic link: {ex.Message}");
+                                }
                             }
                         }
                     }

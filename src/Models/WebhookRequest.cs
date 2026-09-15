@@ -74,4 +74,31 @@ public sealed class WebhookRequest
     [JsonIgnore]
     [CanBeNull]
     public string GitHubToken { get; set; }
+
+    /// <summary>
+    ///     Namespaced <see cref="EnvironmentVariables" /> key that lets the webhook initiator skip
+    ///     retargeting the Latest symlink. Artifacts and timestamp files are still written.
+    /// </summary>
+    public const string SkipLatestSymlinkEnvironmentVariable = "artifacts_receiver_skip_latest_symlink";
+
+    /// <summary>
+    ///     Returns <see langword="true" /> only when <see cref="SkipLatestSymlinkEnvironmentVariable" />
+    ///     is present and parses as boolean <see langword="true" />. Missing, <see langword="false" />,
+    ///     or malformed values keep the current Latest-symlink behavior.
+    /// </summary>
+    public bool ShouldSkipLatestSymlink()
+    {
+        if (EnvironmentVariables is null)
+        {
+            return false;
+        }
+
+        if (!EnvironmentVariables.TryGetValue(SkipLatestSymlinkEnvironmentVariable, out string value)
+            || string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return bool.TryParse(value.Trim(), out bool skip) && skip;
+    }
 }
