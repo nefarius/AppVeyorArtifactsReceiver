@@ -45,6 +45,7 @@ internal static class DiscordNotificationBuilder
             [
                 Field("Project", ResolveProject(request), inline: true),
                 Field("Build", ResolveBuild(request), inline: true),
+                Field("Job", FormatJob(request), inline: true),
                 Field("Branch", FormatBranch(request), inline: true),
                 Field("Commit", FormatCommit(request), inline: true),
                 Field("Artifacts", FormatArtifacts(request, result), inline: true),
@@ -113,6 +114,45 @@ internal static class DiscordNotificationBuilder
             request.CommitId,
             GetEnv(request, "github_sha"),
             GetEnv(request, "appveyor_repo_commit")) ?? "unknown";
+    }
+
+    private static string FormatJob(WebhookRequest request)
+    {
+        string? label = GetEnv(request, WebhookRequest.JobLabelEnvironmentVariable);
+        string? providerIdentity = FormatGitHubJobIdentity(request)
+            ?? FirstNonEmpty(
+                request.BuildJobId,
+                request.JobId,
+                GetEnv(request, "appveyor_job_id"),
+                GetEnv(request, "appveyor_job_name"));
+
+        if (!string.IsNullOrWhiteSpace(label) && !string.IsNullOrWhiteSpace(providerIdentity))
+        {
+            return $"{label.Trim()} · {providerIdentity}";
+        }
+
+        return FirstNonEmpty(label, providerIdentity) ?? "unknown";
+    }
+
+    private static string? FormatGitHubJobIdentity(WebhookRequest request)
+    {
+        string? job = GetEnv(request, "github_job");
+        string? runId = GetEnv(request, "github_run_id");
+        string? attempt = GetEnv(request, "github_run_attempt");
+
+        List<string> parts = [];
+        if (!string.IsNullOrWhiteSpace(job))
+        {
+            parts.Add(job.Trim());
+        }
+
+        if (!string.IsNullOrWhiteSpace(runId))
+        {
+            string run = runId.Trim();
+            parts.Add(string.IsNullOrWhiteSpace(attempt) ? run : $"{run}-{attempt.Trim()}");
+        }
+
+        return parts.Count == 0 ? null : string.Join(" · ", parts);
     }
 
     private static string FormatArtifacts(WebhookRequest request, JobProcessingResult result)

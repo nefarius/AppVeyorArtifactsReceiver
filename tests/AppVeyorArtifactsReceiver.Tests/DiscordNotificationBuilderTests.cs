@@ -56,6 +56,79 @@ public sealed class DiscordNotificationBuilderTests
     }
 
     [Fact]
+    public void Job_field_includes_github_label_job_and_run_attempt()
+    {
+        WebhookRequest request = new()
+        {
+            Artifacts = [],
+            EnvironmentVariables = new Dictionary<string, string>
+            {
+                ["github_job"] = "build",
+                ["github_run_id"] = "33663544790",
+                ["github_run_attempt"] = "2",
+                [WebhookRequest.JobLabelEnvironmentVariable] = "Release / x64"
+            }
+        };
+        JobProcessingResult result = new();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal("Release / x64 · build · 33663544790-2", Field(embed, "Job"));
+    }
+
+    [Fact]
+    public void Job_field_uses_github_ids_without_label()
+    {
+        WebhookRequest request = new()
+        {
+            Artifacts = [],
+            EnvironmentVariables = new Dictionary<string, string>
+            {
+                ["github_job"] = "build",
+                ["github_run_id"] = "33663544790",
+                ["github_run_attempt"] = "1"
+            }
+        };
+        JobProcessingResult result = new();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal("build · 33663544790-1", Field(embed, "Job"));
+    }
+
+    [Fact]
+    public void Job_field_uses_appveyor_job_ids()
+    {
+        WebhookRequest request = CreateAppVeyorRequest();
+        request.BuildJobId = "abc123job";
+        request.JobId = "ignored-when-build-job-present";
+        JobProcessingResult result = new();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal("abc123job", Field(embed, "Job"));
+    }
+
+    [Fact]
+    public void Job_field_falls_back_to_unknown()
+    {
+        WebhookRequest request = new()
+        {
+            Artifacts = [],
+            EnvironmentVariables = []
+        };
+        JobProcessingResult result = new();
+        result.RecordArtifactSuccess();
+
+        DiscordEmbed embed = Assert.Single(DiscordNotificationBuilder.Build(request, result).Embeds);
+
+        Assert.Equal("unknown", Field(embed, "Job"));
+    }
+
+    [Fact]
     public void Payload_falls_back_to_github_environment_variables()
     {
         WebhookRequest request = new()

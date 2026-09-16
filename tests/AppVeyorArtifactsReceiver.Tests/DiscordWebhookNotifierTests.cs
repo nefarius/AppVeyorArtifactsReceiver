@@ -96,88 +96,23 @@ public sealed class DiscordWebhookNotifierTests
     }
 
     [Fact]
-    public async Task NotifyAsync_retries_after_every_webhook_delivery_fails()
+    public async Task NotifyAsync_posts_again_for_the_same_run_and_target()
     {
-        RecordingHandler handler = new(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        RecordingHandler handler = new();
         DiscordWebhookNotifier notifier = CreateNotifier(handler);
-        WebhookRequest request = CreateGitHubRequest("33663544790");
-        JobProcessingResult result = CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251");
-        string[] urls = ["https://discord.com/api/webhooks/1/token"];
-
-        await notifier.NotifyAsync(urls, request, result, CancellationToken.None);
-        await notifier.NotifyAsync(urls, request, CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251"),
-            CancellationToken.None);
-
-        Assert.Equal(2, handler.Requests.Count);
-    }
-
-    [Fact]
-    public async Task NotifyAsync_keeps_the_claim_when_any_webhook_succeeds()
-    {
-        RecordingHandler handler = new(request =>
+        WebhookRequest request = CreateRequest();
+        request.EnvironmentVariables = new Dictionary<string, string>
         {
-            if (request.RequestUri!.AbsoluteUri.Contains("/1/", StringComparison.Ordinal))
-            {
-                throw new HttpRequestException("webhook rejected");
-            }
-
-            return new HttpResponseMessage(HttpStatusCode.NoContent);
-        });
-        DiscordWebhookNotifier notifier = CreateNotifier(handler);
-        WebhookRequest request = CreateGitHubRequest("33663544790");
-        JobProcessingResult result = CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251");
-        string[] urls =
-        [
-            "https://discord.com/api/webhooks/1/fail",
-            "https://discord.com/api/webhooks/2/ok"
-        ];
-
-        await notifier.NotifyAsync(urls, request, result, CancellationToken.None);
-        await notifier.NotifyAsync(urls, request, CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251"),
-            CancellationToken.None);
-
-        Assert.Equal(2, handler.Requests.Count);
-    }
-
-    [Fact]
-    public async Task NotifyAsync_skips_a_second_post_for_the_same_run_and_target()
-    {
-        RecordingHandler handler = new();
-        DiscordWebhookNotifier notifier = CreateNotifier(handler);
-        WebhookRequest request = CreateGitHubRequest("33663544790");
-        JobProcessingResult result = CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251");
+            ["github_run_id"] = "33663544790"
+        };
+        JobProcessingResult result = CreateSuccessResult();
+        result.TargetSubDirectory = "builds/DsHidMini/v3.7.2/251";
         string[] urls = ["https://discord.com/api/webhooks/1/token"];
 
         await notifier.NotifyAsync(urls, request, result, CancellationToken.None);
-        await notifier.NotifyAsync(urls, request, CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251"),
-            CancellationToken.None);
-
-        Assert.Single(handler.Requests);
-    }
-
-    [Fact]
-    public async Task NotifyAsync_posts_again_for_a_different_run()
-    {
-        RecordingHandler handler = new();
-        DiscordWebhookNotifier notifier = CreateNotifier(handler);
-        JobProcessingResult result = CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251");
-        string[] urls = ["https://discord.com/api/webhooks/1/token"];
-
-        await notifier.NotifyAsync(urls, CreateGitHubRequest("1"), result, CancellationToken.None);
-        await notifier.NotifyAsync(urls, CreateGitHubRequest("2"), result, CancellationToken.None);
+        await notifier.NotifyAsync(urls, request, result, CancellationToken.None);
 
         Assert.Equal(2, handler.Requests.Count);
-    }
-
-    [Fact]
-    public void TryCreateDedupeKey_uses_webhook_run_and_target()
-    {
-        WebhookRequest request = CreateGitHubRequest("33663544790");
-        JobProcessingResult result = CreateTargetedSuccess("builds/DsHidMini/v3.7.2/251");
-
-        Assert.Equal(
-            $"{request.Id:N}|33663544790|builds/DsHidMini/v3.7.2/251",
-            DiscordWebhookNotifier.TryCreateDedupeKey(request, result));
     }
 
     [Fact]
@@ -218,29 +153,10 @@ public sealed class DiscordWebhookNotifierTests
         };
     }
 
-    private static WebhookRequest CreateGitHubRequest(string runId)
-    {
-        WebhookRequest request = CreateRequest();
-        request.Id = Guid.Parse("7b544703-bdd0-4420-9b96-18208076d4df");
-        request.EnvironmentVariables = new Dictionary<string, string>
-        {
-            ["github_run_id"] = runId,
-            ["github_repository"] = "nefarius/DsHidMini"
-        };
-        return request;
-    }
-
     private static JobProcessingResult CreateSuccessResult()
     {
         JobProcessingResult result = new();
         result.RecordArtifactSuccess();
-        return result;
-    }
-
-    private static JobProcessingResult CreateTargetedSuccess(string target)
-    {
-        JobProcessingResult result = CreateSuccessResult();
-        result.TargetSubDirectory = target;
         return result;
     }
 

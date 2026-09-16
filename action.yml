@@ -32,6 +32,13 @@ inputs:
       files but does not retarget the Latest symlink. Must be true or false.
     required: false
     default: 'false'
+  job-label:
+    description: >
+      Optional label included on Discord summaries so matrix or parallel jobs
+      from the same run can be told apart. Pass matrix values such as
+      configuration and architecture for that job.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -43,6 +50,7 @@ runs:
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
         ARTIFACT_NAME: ${{ inputs.artifact-name }}
         SKIP_LATEST_SYMLINK: ${{ inputs.skip-latest-symlink }}
+        JOB_LABEL: ${{ inputs.job-label }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
@@ -50,6 +58,7 @@ runs:
           const token = (process.env.INPUT_GITHUB_TOKEN || '').trim();
           const artifactNameFilter = (process.env.ARTIFACT_NAME || '').trim();
           const skipLatestSymlinkRaw = (process.env.SKIP_LATEST_SYMLINK || '').trim().toLowerCase();
+          const jobLabel = (process.env.JOB_LABEL || '').trim();
 
           if (!webhookUrl) {
             core.setFailed('Input webhook-url is required.');
@@ -139,7 +148,9 @@ runs:
               github_run_id: String(context.runId ?? process.env.GITHUB_RUN_ID ?? ''),
               github_run_number: String(context.runNumber ?? process.env.GITHUB_RUN_NUMBER ?? ''),
               github_run_attempt: String(process.env.GITHUB_RUN_ATTEMPT || ''),
-              artifacts_receiver_skip_latest_symlink: skipLatestSymlink ? 'true' : 'false'
+              github_job: process.env.GITHUB_JOB || context.job || '',
+              artifacts_receiver_skip_latest_symlink: skipLatestSymlink ? 'true' : 'false',
+              artifacts_receiver_job_label: jobLabel
             }
           };
 

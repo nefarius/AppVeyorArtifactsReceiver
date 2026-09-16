@@ -82,6 +82,12 @@ public sealed class WebhookRequest
     public const string SkipLatestSymlinkEnvironmentVariable = "artifacts_receiver_skip_latest_symlink";
 
     /// <summary>
+    ///     Namespaced <see cref="EnvironmentVariables" /> key for an optional caller-supplied label
+    ///     that distinguishes Discord summaries from the same batch of job runs (matrix values).
+    /// </summary>
+    public const string JobLabelEnvironmentVariable = "artifacts_receiver_job_label";
+
+    /// <summary>
     ///     Returns <see langword="true" /> only when <see cref="SkipLatestSymlinkEnvironmentVariable" />
     ///     is present and parses as boolean <see langword="true" />. Missing, <see langword="false" />,
     ///     or malformed values keep the current Latest-symlink behavior.
