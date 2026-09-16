@@ -23,7 +23,7 @@ Use one receiver for either CI, or both at once (give each provider its own webh
 - **Executable metadata** — When `StoreMetaData` is enabled, Win32 version resource data (`FileVersion`, `ProductVersion`) is extracted from PE files (`.exe`, `.dll`, and similar) and written to hidden sidecar JSON next to the file (e.g. `.MyApp.exe.json`) for auto-updaters and other tools.
 - **GitHub Actions zip extraction** — Requests that send `X-GitHub-Token` download a zip (`actions/upload-artifact`). The receiver unpacks that zip into the build directory (preserving in-archive paths, zip-slip checked), writes PE sidecars next to extracted executables, and deletes the container zip. Nested zips are left as files. AppVeyor uploads are not unpacked.
 - **ZIP artifact metadata** — If an AppVeyor artifact is itself a ZIP (no GitHub token), PE metadata is scanned inside the archive without extracting it: entries are scanned up to a configurable limit, oversized entries are skipped, paths are validated (including zip-slip checks), and PEs without a typical extension are detected via the MZ header. Sidecars are stored under a hidden tree rooted at `.{sanitized_zip_basename}/`, mirroring the in-archive path (each directory segment is stored as a hidden segment; each file gets a `.filename.json` sidecar in the corresponding mirrored folder).
-- **Discord notifications** — Optional per-webhook Discord incoming-webhook URLs receive one embed after a job finishes: green on full success, red on failure or partial artifact failure. When `PublicArtifactsBaseUrl` is set, the target folder is a clickable link; GitHub-hosted jobs also link branch and commit. Delivery is best-effort and does not change HTTP acceptance.
+- **Discord notifications** — Optional per-webhook Discord incoming-webhook URLs receive one embed after **each** job finishes: green on full success, red on failure or partial artifact failure. The embed includes a Job field (optional `job-label`, GitHub job/run/attempt, or AppVeyor job ids) so messages from the same batch of job runs can be told apart. When `PublicArtifactsBaseUrl` is set, the target folder is a clickable link; GitHub-hosted jobs also link branch and commit. Delivery is best-effort and does not change HTTP acceptance.
 
 ## Quick start
 
@@ -144,6 +144,17 @@ To store artifacts without retargeting the `latest` symlink (preview or matrix j
           skip-latest-symlink: true
 ```
 
+Parallel or matrix jobs from the same workflow run each produce their own Discord message. Set `job-label` to a value that identifies that copy (GitHub does not expose matrix values automatically):
+
+```yml
+      - name: Notify artifacts receiver
+        uses: nefarius/AppVeyorArtifactsReceiver@master
+        with:
+          webhook-url: ${{ secrets.WEBHOOK_URL }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          job-label: ${{ matrix.configuration }} / ${{ matrix.architecture }}
+```
+
 ## AppVeyor
 
 In AppVeyor, [create a deployment](https://ci.appveyor.com/environments/new) with the **Webhook** provider and point it at `https://ci.example.org/webhooks/<guid>` (the same secret GUID as in `ServiceConfig:Webhooks`).
@@ -184,7 +195,7 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | `StoreMetaData` | Optional; default `true`. Set `false` to skip PE metadata sidecars for both loose PE files and ZIP contents. |
 | `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor PE metadata). Use `0` for the built-in default (**8192**). |
 | `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to extract or load for parsing. Use `0` for the built-in default (**256 MiB**). |
-| `DiscordWebhookUrls` | Optional. Array of Discord incoming-webhook URLs for this target. After each job the receiver POSTs one summary embed (project/repository, build, branch, abbreviated commit, artifact names and counts, target subdirectory, and error details). A second job for the same webhook, CI run, and target folder within six hours is not posted again (parallel GitHub jobs that share a path template would otherwise look like a duplicate). That window is in-memory on this process, so run a single receiver instance. A job is successful only when processing recorded no error-level failures (empty artifact sets, path escapes, download/copy failures, symlink/timestamp failures, and unhandled exceptions). Warning-only ZIP/PE skips stay non-fatal. Omit or use `[]` to disable. Treat each URL as a secret. |
+| `DiscordWebhookUrls` | Optional. Array of Discord incoming-webhook URLs for this target. After each job the receiver POSTs one summary embed (project/repository, build, job identity, branch, abbreviated commit, artifact names and counts, target subdirectory, and error details). Every webhook event produces a message; use `job-label` (GitHub Action) or AppVeyor job ids to distinguish parallel jobs from the same run. A job is successful only when processing recorded no error-level failures (empty artifact sets, path escapes, download/copy failures, symlink/timestamp failures, and unhandled exceptions). Warning-only ZIP/PE skips stay non-fatal. Omit or use `[]` to disable. Treat each URL as a secret. |
 | `PublicArtifactsBaseUrl` | Optional. Public HTTP(S) origin that maps to `RootDirectory` (for example `https://artifacts.example.com`). When set, Discord summaries link the target subdirectory under this base. Omit it to keep **only the target path** as plain text. Branch and commit links are generated independently when the job has valid GitHub repository metadata. |
 
 ### Path placeholders
@@ -217,6 +228,9 @@ The bundled action always sends a native `github_*` catalog **and** three AppVey
 | `{github_run_id}` | `context.runId` | Unique **within the repository**; does not change on re-run |
 | `{github_run_number}` | `context.runNumber` | Unique **within one workflow file**, not the whole repository |
 | `{github_run_attempt}` | `GITHUB_RUN_ATTEMPT` | `1` on the first try; increments on *Re-run jobs* |
+| `{github_job}` | `GITHUB_JOB` / `context.job` | Workflow job id (the key under `jobs:`). Shared by every matrix copy of that job |
+
+The action also forwards `artifacts_receiver_job_label` when the `job-label` input is set. That value is intended for Discord summaries, not as a unique path segment: matrix jobs that share a `TargetPathTemplate` still write to the same folder.
 
 Recommended GitHub templates (rerun-safe; unique across owners, repositories, and workflows):
 
