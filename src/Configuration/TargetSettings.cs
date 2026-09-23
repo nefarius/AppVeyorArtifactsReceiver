@@ -31,18 +31,18 @@ public sealed class TargetSettings
     public required string RootDirectory { get; set; }
 
     /// <summary>
-    ///     Gets whether automatic ".artifact-name.exe.json" metadata files should be generated.
+    ///     Gets whether hidden metadata sidecars should be generated for PE and MSI artifacts.
     /// </summary>
     public bool StoreMetaData { get; set; } = true;
 
     /// <summary>
-    ///     Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor PE metadata).
+    ///     Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor metadata).
     ///     Zero uses the built-in default (8192).
     /// </summary>
     public int ZipMaxEntriesToScan { get; set; }
 
     /// <summary>
-    ///     Maximum uncompressed size in bytes of a single ZIP entry to extract or load for PE parsing.
+    ///     Maximum uncompressed size in bytes of a single ZIP entry to extract or load for metadata parsing.
     ///     Zero uses the built-in default (256 MiB).
     /// </summary>
     public long ZipMaxEntryBytes { get; set; }

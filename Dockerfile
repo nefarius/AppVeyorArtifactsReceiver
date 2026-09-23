@@ -16,6 +16,11 @@ FROM build AS publish
 RUN dotnet publish "AppVeyorArtifactsReceiver.csproj" -c Release -o /app/publish
 
 FROM base AS final
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends msitools \
+    && rm -rf /var/lib/apt/lists/*
+USER $APP_UID
 WORKDIR /app
 COPY --from=publish /app/publish .
 ENTRYPOINT ["dotnet", "AppVeyorArtifactsReceiver.dll"]
