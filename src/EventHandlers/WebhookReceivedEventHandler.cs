@@ -145,7 +145,7 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                         result.RecordArtifactSuccess();
                     }
-                    catch (OperationCanceledException)
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
                         throw;
                     }
@@ -212,7 +212,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                     }
                 }
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw;
             }
@@ -360,7 +360,7 @@ internal sealed partial class WebhookReceivedEventHandler(
             await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(result.Metadata), ct);
             logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
@@ -638,7 +638,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                 }
             }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             throw;
         }
