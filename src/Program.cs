@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Reflection;
 
 using AppVeyorArtifactsReceiver.Configuration;
+using AppVeyorArtifactsReceiver.Metadata;
 using AppVeyorArtifactsReceiver.Models;
 using AppVeyorArtifactsReceiver.Notifications;
 
@@ -45,6 +46,7 @@ builder.Services.AddHttpClient("AppVeyor",
     .AddTransientHttpErrorPolicy(pb =>
         pb.WaitAndRetryAsync(Backoff.DecorrelatedJitterBackoffV2(TimeSpan.FromSeconds(3), 10)));
 
+builder.Services.AddSingleton<IMsiMetadataReader, MsiMetadataReader>();
 builder.Services.AddSingleton<DiscordWebhookNotifier>();
 builder.Services.AddHttpClient(DiscordWebhookNotifier.HttpClientName,
         client =>

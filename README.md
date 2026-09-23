@@ -20,9 +20,9 @@ Use one receiver for either CI, or both at once (give each provider its own webh
 - **Latest symlink** — When configured, a symbolic link is created or updated at the path given by `LatestSymlinkTemplate`, pointing at the directory for the current build (derived from `TargetPathTemplate`). Use this for a stable URL to the newest artifacts. A single request can skip retargeting by setting `artifacts_receiver_skip_latest_symlink=true` (GitHub Action input `skip-latest-symlink`); artifacts and timestamp files are still written.
 - **Latest timestamp file** — When `TargetPathTemplate` is set, `LAST_UPDATED_AT.txt` is written in the build directory with the ISO 8601 timestamp when each deployment completes, for APIs or scripts to consume (independent of whether `LatestSymlinkTemplate` is configured).
 - **SVG badge** — `LAST_UPDATED_AT.svg` is generated alongside the timestamp file under the same rules.
-- **Executable metadata** — When `StoreMetaData` is enabled, Win32 version resource data (`FileVersion`, `ProductVersion`) is extracted from PE files (`.exe`, `.dll`, and similar) and written to hidden sidecar JSON next to the file (e.g. `.MyApp.exe.json`) for auto-updaters and other tools.
-- **GitHub Actions zip extraction** — Requests that send `X-GitHub-Token` download a zip (`actions/upload-artifact`). The receiver unpacks that zip into the build directory (preserving in-archive paths, zip-slip checked), writes PE sidecars next to extracted executables, and deletes the container zip. Nested zips are left as files. AppVeyor uploads are not unpacked.
-- **ZIP artifact metadata** — If an AppVeyor artifact is itself a ZIP (no GitHub token), PE metadata is scanned inside the archive without extracting it: entries are scanned up to a configurable limit, oversized entries are skipped, paths are validated (including zip-slip checks), and PEs without a typical extension are detected via the MZ header. Sidecars are stored under a hidden tree rooted at `.{sanitized_zip_basename}/`, mirroring the in-archive path (each directory segment is stored as a hidden segment; each file gets a `.filename.json` sidecar in the corresponding mirrored folder).
+- **Artifact metadata** — When `StoreMetaData` is enabled, hidden sidecar JSON is written for Windows binaries and installer packages. Every sidecar has a `type` discriminator (`pe` today, `msi` for Windows Installer packages, and further values such as `pdb` later) so a parser can tell the formats apart and ignore kinds it does not know. PE sidecars still contain `FileVersion` and `ProductVersion` (for example `.MyApp.exe.json`). MSI sidecars contain `ProductVersion`, `ProductName`, `Manufacturer`, and `ProductCode` (for example `.Setup.msi.json`). This applies to loose files, files unpacked from GitHub artifact zips, and packages found inside AppVeyor zips.
+- **GitHub Actions zip extraction** — Requests that send `X-GitHub-Token` download a zip (`actions/upload-artifact`). The receiver unpacks that zip into the build directory (preserving in-archive paths, zip-slip checked), writes PE and MSI sidecars next to extracted files, and deletes the container zip. Nested zips are left as files. AppVeyor uploads are not unpacked.
+- **ZIP artifact metadata** — If an AppVeyor artifact is itself a ZIP (no GitHub token), PE and MSI metadata is scanned inside the archive without extracting it: entries are scanned up to a configurable limit, oversized entries are skipped, paths are validated (including zip-slip checks), PEs without a typical extension are detected via the MZ header, and MSI packages are detected via the `.msi` extension or OLE compound-file signature. Sidecars are stored under a hidden tree rooted at `.{sanitized_zip_basename}/`, mirroring the in-archive path (each directory segment is stored as a hidden segment; each file gets a `.filename.json` sidecar in the corresponding mirrored folder).
 - **Discord notifications** — Optional per-webhook Discord incoming-webhook URLs receive one embed after **each** job finishes: green on full success, red on failure or partial artifact failure. The embed includes a Job field (optional `job-label`, GitHub job/run/attempt, or AppVeyor job ids) so messages from the same batch of job runs can be told apart. When `PublicArtifactsBaseUrl` is set, the target folder is a clickable link; GitHub-hosted jobs also link branch and commit. Delivery is best-effort and does not change HTTP acceptance.
 
 ## Quick start
@@ -192,8 +192,8 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | `TargetPathTemplate` | **Required.** Subdirectory under `RootDirectory` for this build. Use `{placeholder}` tokens; values are taken from the webhook JSON `environmentVariables` object. An unknown placeholder **fails** the request. |
 | `LatestSymlinkTemplate` | Optional. Set this only if you want a `latest`-style symlink: after the artifact loop finishes, the symlink at the expanded path is updated to point at the current build directory (same `{placeholder}` rules as `TargetPathTemplate`). Artifact failures are recorded and do not skip this step, so `latest` can point at an incomplete build when the job is unsuccessful. Omit it if you do not need that indirection. A single request can skip the update by setting `environmentVariables.artifacts_receiver_skip_latest_symlink` to `true` (GitHub Action input `skip-latest-symlink`); timestamp and badge files are still written. Missing, `false`, or malformed values keep this default. |
 | `RootDirectory` | **Required.** Root folder on disk where build trees and metadata are stored (e.g. `/data` in Docker). |
-| `StoreMetaData` | Optional; default `true`. Set `false` to skip PE metadata sidecars for both loose PE files and ZIP contents. |
-| `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor PE metadata). Use `0` for the built-in default (**8192**). |
+| `StoreMetaData` | Optional; default `true`. Set `false` to skip PE and MSI metadata sidecars for loose files and ZIP contents. |
+| `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor metadata). Use `0` for the built-in default (**8192**). |
 | `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to extract or load for parsing. Use `0` for the built-in default (**256 MiB**). |
 | `DiscordWebhookUrls` | Optional. Array of Discord incoming-webhook URLs for this target. After each job the receiver POSTs one summary embed (project/repository, build, job identity, branch, abbreviated commit, artifact names and counts, target subdirectory, and error details). Every webhook event produces a message; use `job-label` (GitHub Action) or AppVeyor job ids to distinguish parallel jobs from the same run. A job is successful only when processing recorded no error-level failures (empty artifact sets, path escapes, download/copy failures, symlink/timestamp failures, and unhandled exceptions). Warning-only ZIP/PE skips stay non-fatal. Omit or use `[]` to disable. Treat each URL as a secret. |
 | `PublicArtifactsBaseUrl` | Optional. Public HTTP(S) origin that maps to `RootDirectory` (for example `https://artifacts.example.com`). When set, Discord summaries link the target subdirectory under this base. Omit it to keep **only the target path** as plain text. Branch and commit links are generated independently when the job has valid GitHub repository metadata. |
@@ -282,10 +282,36 @@ Example (also in [src/appsettings.Production.example.json](src/appsettings.Produ
 "PublicArtifactsBaseUrl": "https://artifacts.example.com"
 ```
 
+## Metadata sidecars
+
+Sidecars are hidden JSON files. A PE named `MyApp.exe` gets `.MyApp.exe.json` in the same directory. An MSI named `Setup.msi` gets `.Setup.msi.json`. Inside an AppVeyor ZIP that is not unpacked, the same file names are mirrored under `.{zip_basename}/`.
+
+`type` is the format discriminator. Existing PE fields are unchanged apart from this added field:
+
+```json
+{ "type": "pe", "FileVersion": "1.2.3.4", "ProductVersion": "1.2.3.4" }
+```
+
+```json
+{
+  "type": "msi",
+  "ProductVersion": "1.2.3",
+  "ProductName": "My Product",
+  "Manufacturer": "Nefarius",
+  "ProductCode": "{00000000-0000-0000-0000-000000000000}"
+}
+```
+
+Missing MSI properties are JSON `null`. A package that cannot be read does not get a sidecar, and that failure does not fail the artifact download.
+
+Windows reads the MSI `Property` table through Windows Installer. Linux, including the published container image, reads it with `msiinfo` from Debian's [`msitools`](https://packages.debian.org/stable/msitools) package. The image installs that package. A non-container Linux host needs `msitools` on `PATH`.
+
 ## Third-Party Credits
 
 - [Polly](https://github.com/App-vNext/Polly)
 - [PeNet](https://github.com/secana/PeNet)
+- [WiX Toolset DTF](https://wixtoolset.org/) (Windows MSI metadata)
+- [msitools](https://wiki.gnome.org/msitools) (Linux MSI metadata)
 - [Serilog](https://serilog.net/)
 - [FastEndpoints](https://github.com/FastEndpoints/FastEndpoints)
 - [Serilog.Enrichers.Sensitive](https://github.com/serilog-contrib/Serilog.Enrichers.Sensitive)

@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 
 using AppVeyorArtifactsReceiver.Configuration;
+using AppVeyorArtifactsReceiver.Metadata;
 using AppVeyorArtifactsReceiver.Models;
 using AppVeyorArtifactsReceiver.Notifications;
 
@@ -33,16 +34,12 @@ internal sealed partial class WebhookReceivedEventHandler(
     ILogger<WebhookReceivedEventHandler> logger,
     IOptionsSnapshot<ServiceConfig> serviceConfig,
     IHttpClientFactory httpClientFactory,
-    DiscordWebhookNotifier discordNotifier)
+    DiscordWebhookNotifier discordNotifier,
+    IMsiMetadataReader msiMetadataReader)
     : IEventHandler<WebhookRequest>
 {
     private const int DefaultMaxZipEntriesToScan = 8192;
     private const long DefaultMaxZipEntryBytes = 256L * 1024 * 1024;
-
-    private static readonly string[] PeLikeExtensions =
-    [
-        ".exe", ".dll", ".sys", ".ocx", ".scr", ".efi", ".cpl", ".mui", ".drv", ".msc"
-    ];
 
     public async Task HandleAsync(WebhookRequest req, CancellationToken ct)
     {
@@ -138,15 +135,19 @@ internal sealed partial class WebhookReceivedEventHandler(
                             await using FileStream readStream = File.OpenRead(absolutePath);
                             if (IsZipFile(readStream))
                             {
-                                await ExtractZipPeMetadata(absolutePath, artifact.FileName, hookCfg, ct);
+                                await ExtractZipArtifactMetadata(absolutePath, artifact.FileName, hookCfg, ct);
                             }
-                            else if (IsPEFile(readStream))
+                            else
                             {
-                                await WritePeMetadataSidecarForFile(readStream, absolutePath, ct);
+                                await WriteMetadataSidecarAsync(readStream, absolutePath, ct);
                             }
                         }
 
                         result.RecordArtifactSuccess();
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
                     }
                     catch (Exception ex)
                     {
@@ -210,6 +211,10 @@ internal sealed partial class WebhookReceivedEventHandler(
                         result.RecordError($"Failed to create timestamp file: {ex.Message}");
                     }
                 }
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -294,6 +299,77 @@ internal sealed partial class WebhookReceivedEventHandler(
         await File.WriteAllTextAsync(svgPath, svg.Trim());
     }
 
+    private async Task WriteMetadataSidecarAsync(Stream stream, string absolutePath, CancellationToken ct)
+    {
+        switch (ArtifactFileInspector.Detect(absolutePath, stream))
+        {
+            case ArtifactMetadataKind.Msi:
+                await WriteMsiMetadataSidecarForFile(absolutePath, ct);
+                break;
+            case ArtifactMetadataKind.Pe:
+                await WritePeMetadataSidecarForFile(stream, absolutePath, ct);
+                break;
+            default:
+                if (ArtifactFileInspector.HasMsiExtension(absolutePath))
+                {
+                    logger.LogWarning(
+                        "Skipping MSI metadata for {File} because it is not a compound file",
+                        absolutePath);
+                }
+
+                break;
+        }
+    }
+
+    private async Task WriteMsiMetadataSidecarForFile(string absoluteMsiPath, CancellationToken ct)
+    {
+        string metaDirectory = Path.GetDirectoryName(absoluteMsiPath)!;
+        string metaFileName = Path.GetFileName(absoluteMsiPath);
+        string metaAbsolutePath = Path.Combine(metaDirectory, $".{metaFileName}.json");
+        await WriteMsiMetadataAsync(absoluteMsiPath, metaAbsolutePath, absoluteMsiPath, ct);
+    }
+
+    private async Task WriteMsiMetadataAsync(
+        string packagePath,
+        string metaAbsolutePath,
+        string logSourcePath,
+        CancellationToken ct)
+    {
+        try
+        {
+            MsiMetadataReadResult result = await msiMetadataReader.ReadAsync(packagePath, ct);
+            if (!result.Succeeded)
+            {
+                LogLevel level = ArtifactFileInspector.HasMsiExtension(logSourcePath)
+                    ? LogLevel.Warning
+                    : LogLevel.Debug;
+                logger.Log(
+                    level,
+                    "Failed to read MSI metadata from {File}: {Detail}",
+                    logSourcePath,
+                    result.FailureDetail);
+                return;
+            }
+
+            string metaDirectory = Path.GetDirectoryName(metaAbsolutePath);
+            if (!string.IsNullOrEmpty(metaDirectory))
+            {
+                Directory.CreateDirectory(metaDirectory);
+            }
+
+            await File.WriteAllTextAsync(metaAbsolutePath, JsonSerializer.Serialize(result.Metadata), ct);
+            logger.LogInformation("Generated meta-data file {MetaFile}", metaAbsolutePath);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to read MSI metadata from {File}", logSourcePath);
+        }
+    }
+
     private async Task WritePeMetadataSidecarForFile(Stream file, string absolutePePath, CancellationToken ct = default)
     {
         string metaDirectory = Path.GetDirectoryName(absolutePePath)!;
@@ -350,8 +426,8 @@ internal sealed partial class WebhookReceivedEventHandler(
 
     /// <summary>
     ///     Unpacks a GitHub Actions artifact zip into <paramref name="absoluteTargetPath" />, preserving
-    ///     in-archive relative paths. Nested zips are written as files and not opened again. PE sidecars
-    ///     are written next to extracted executables (same as loose AppVeyor files).
+    ///     in-archive relative paths. Nested zips are written as files and not opened again. PE and MSI
+    ///     sidecars are written next to extracted files (same as loose AppVeyor files).
     /// </summary>
     private async Task ExtractGitHubZipToTarget(
         string zipAbsolutePath,
@@ -432,17 +508,14 @@ internal sealed partial class WebhookReceivedEventHandler(
             }
 
             await using FileStream readStream = File.OpenRead(destPath);
-            if (IsPEFile(readStream))
-            {
-                await WritePeMetadataSidecarForFile(readStream, destPath, ct);
-            }
+            await WriteMetadataSidecarAsync(readStream, destPath, ct);
         }
 
         logger.LogInformation("Extracted {Count} entries from {Zip} into {Target}",
             extracted, zipAbsolutePath, absoluteTargetPath);
     }
 
-    private async Task ExtractZipPeMetadata(
+    private async Task ExtractZipArtifactMetadata(
         string zipAbsolutePath,
         string artifactFileName,
         TargetSettings targetSettings,
@@ -512,19 +585,14 @@ internal sealed partial class WebhookReceivedEventHandler(
                     continue;
                 }
 
-                bool looksLikePeByExt = HasPeLikeExtension(entry.Name);
-                if (!looksLikePeByExt)
+                ArtifactMetadataKind kind = await ClassifyZipEntryAsync(entry, ct);
+                if (kind == ArtifactMetadataKind.None)
                 {
-                    await using (Stream peekStream = entry.Open())
-                    {
-                        if (!await QuickLooksLikeMzHeaderAsync(peekStream, ct))
-                        {
-                            continue;
-                        }
-                    }
+                    continue;
                 }
 
-                string tempFile = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + ".pe");
+                string tempExtension = kind == ArtifactMetadataKind.Msi ? ".msi" : ".pe";
+                string tempFile = Path.Combine(tempDir, Guid.NewGuid().ToString("N") + tempExtension);
                 try
                 {
                     await using (Stream entryStream = entry.Open())
@@ -533,12 +601,6 @@ internal sealed partial class WebhookReceivedEventHandler(
                     {
                         long maxBytes = Math.Min(entry.Length, maxZipEntryBytes);
                         await CopyLimitedAsync(entryStream, tempOutput, maxBytes, ct);
-                    }
-
-                    await using FileStream peStream = File.OpenRead(tempFile);
-                    if (!IsPEFile(peStream))
-                    {
-                        continue;
                     }
 
                     string metaAbsolutePath =
@@ -552,7 +614,23 @@ internal sealed partial class WebhookReceivedEventHandler(
                         ? $"{zipAbsolutePath}!{entry.FullName}"
                         : $"{artifactFileName}!{entry.FullName}";
 
-                    await TryWritePeMetadataJsonAsync(peStream, metaAbsolutePath, logLabel, ct);
+                    await using FileStream stored = File.OpenRead(tempFile);
+                    if (kind == ArtifactMetadataKind.Msi)
+                    {
+                        if (!ArtifactFileInspector.HasCompoundFileSignature(stored))
+                        {
+                            logger.LogWarning(
+                                "Skipping ZIP entry {Path} that is not a compound file",
+                                entry.FullName);
+                            continue;
+                        }
+
+                        await WriteMsiMetadataAsync(tempFile, metaAbsolutePath, logLabel, ct);
+                    }
+                    else if (ArtifactFileInspector.IsPeFile(stored))
+                    {
+                        await TryWritePeMetadataJsonAsync(stored, metaAbsolutePath, logLabel, ct);
+                    }
                 }
                 finally
                 {
@@ -560,9 +638,13 @@ internal sealed partial class WebhookReceivedEventHandler(
                 }
             }
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Failed to extract or scan ZIP for PE metadata {Zip}", zipAbsolutePath);
+            logger.LogWarning(ex, "Failed to extract or scan ZIP for artifact metadata {Zip}", zipAbsolutePath);
         }
         finally
         {
@@ -674,25 +756,18 @@ internal sealed partial class WebhookReceivedEventHandler(
         return result;
     }
 
-    private static bool HasPeLikeExtension(string entryName)
+    private static async Task<ArtifactMetadataKind> ClassifyZipEntryAsync(ZipArchiveEntry entry, CancellationToken ct)
     {
-        string ext = Path.GetExtension(entryName);
-        foreach (string e in PeLikeExtensions)
+        if (ArtifactFileInspector.HasMsiExtension(entry.Name) ||
+            ArtifactFileInspector.HasPeLikeExtension(entry.Name))
         {
-            if (ext.Equals(e, StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
-            }
+            return ArtifactFileInspector.ClassifyEntry(entry.Name, ReadOnlySpan<byte>.Empty);
         }
 
-        return false;
-    }
-
-    private static async Task<bool> QuickLooksLikeMzHeaderAsync(Stream stream, CancellationToken ct)
-    {
-        byte[] buffer = new byte[2];
-        int n = await stream.ReadAsync(buffer.AsMemory(0, 2), ct);
-        return n == 2 && buffer[0] == 0x4D && buffer[1] == 0x5A;
+        byte[] buffer = new byte[8];
+        await using Stream peekStream = entry.Open();
+        int read = await peekStream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct);
+        return ArtifactFileInspector.ClassifyEntry(entry.Name, buffer.AsSpan(0, read));
     }
 
     private static async Task CopyLimitedAsync(Stream source, Stream destination, long maxBytes, CancellationToken ct)
@@ -753,32 +828,6 @@ internal sealed partial class WebhookReceivedEventHandler(
             using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
             uint signature = reader.ReadUInt32();
             return signature == 0x04034b50;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static bool IsPEFile(Stream stream)
-    {
-        try
-        {
-            stream.Seek(0, SeekOrigin.Begin);
-            using BinaryReader reader = new(stream, Encoding.UTF8, leaveOpen: true);
-            // Check for the "MZ" magic number at the start of the file
-            if (reader.ReadUInt16() != 0x5A4D) // "MZ" in hex
-            {
-                return false;
-            }
-
-            // Move to the PE header offset location
-            stream.Seek(0x3C, SeekOrigin.Begin);
-            int peHeaderOffset = reader.ReadInt32();
-
-            // Move to the PE header and check for the "PE\0\0" signature
-            stream.Seek(peHeaderOffset, SeekOrigin.Begin);
-            return reader.ReadUInt32() == 0x00004550; // "PE\0\0" in hex
         }
         catch
         {
