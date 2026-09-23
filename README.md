@@ -31,10 +31,16 @@ Use one receiver for either CI, or both at once (give each provider its own webh
 
 Published images are on Docker Hub as [`containinger/avar`](https://hub.docker.com/r/containinger/avar). The [Dockerfile](Dockerfile) exposes port **8080** by default for the base ASP.NET layer; in practice you configure the listen URL in your mounted `appsettings.Production.json` (the examples use **7089**). Map the host port to whatever port the app binds to inside the container.
 
+The final image runs as the ASP.NET non-root user `$APP_UID`. In the current `mcr.microsoft.com/dotnet/aspnet:9.0` image that user is `app` with UID and GID **1654**. Every writable bind mount must exist on the host and be owned by that user before the container starts. The settings file stays mounted read-only.
+
 ```bash
+sudo mkdir -p /path/to/data /path/to/logs
+sudo chown -R 1654:1654 /path/to/data /path/to/logs
+
 docker pull containinger/avar
-docker run -d -p 7089:7089 \
+docker run -d --name artifacts-receiver -p 7089:7089 \
   -v /path/to/data:/data \
+  -v /path/to/logs:/app/logs \
   -v /path/to/appsettings.Production.json:/app/appsettings.Production.json:ro \
   containinger/avar
 ```
@@ -43,13 +49,24 @@ To build the image locally instead:
 
 ```bash
 docker build -t appveyor-artifacts-receiver .
-docker run -d -p 7089:7089 \
+docker run -d --name artifacts-receiver -p 7089:7089 \
   -v /path/to/data:/data \
+  -v /path/to/logs:/app/logs \
   -v /path/to/appsettings.Production.json:/app/appsettings.Production.json:ro \
   appveyor-artifacts-receiver
 ```
 
-See [docker-compose.example.yml](docker-compose.example.yml) for a full compose example.
+If a webhook fails with `UnauthorizedAccessException` on a path under `/data`, the mounted tree is not writable by the container user. Confirm the runtime identity and ownership, then give the existing tree to that user:
+
+```bash
+docker exec artifacts-receiver id
+docker exec artifacts-receiver ls -ld /data /app/logs
+sudo chown -R 1654:1654 /path/to/data /path/to/logs
+```
+
+`id` prints `uid=1654(app) gid=1654(app)` for the current base image. Use the printed UID and GID if a future base image changes `$APP_UID`. `chown -R` covers directories that an earlier container already created.
+
+See [docker-compose.example.yml](docker-compose.example.yml) for a full compose example. The same ownership applies to `./data/htdocs` (mounted at `/data`) and `./data/logs` (mounted at `/app/logs`).
 
 ### Configure a webhook
 

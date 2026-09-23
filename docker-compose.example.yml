@@ -1,8 +1,15 @@
-﻿version: "2.4"
+version: "2.4"
 
 services:
   receiver:
     build: .
+    # The image runs as $APP_UID (app, UID/GID 1654). Create these host
+    # directories and give them to that user before the first start:
+    #   mkdir -p ./data/htdocs ./data/logs
+    #   sudo chown -R 1654:1654 ./data/htdocs ./data/logs
+    # If webhooks fail with UnauthorizedAccessException under /data, repeat
+    # the chown against the existing tree. Confirm the UID with:
+    #   docker compose exec receiver id
     volumes:
       - ./data/htdocs:/data:rw
       - ./appsettings.Production.json:/app/appsettings.Production.json:ro
