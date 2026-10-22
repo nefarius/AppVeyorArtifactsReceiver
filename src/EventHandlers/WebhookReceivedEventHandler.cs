@@ -100,7 +100,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                             artifact.FileName, subDirectory);
 
                         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
-                        stagingPath = absolutePath + ".incoming";
+                        stagingPath = AllocateStagingPath(absolutePath, hookCfg.RootDirectory);
 
                         using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
 
@@ -113,7 +113,7 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                         await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
-                        await using (FileStream file = File.Create(stagingPath))
+                        await using (FileStream file = new(stagingPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                         {
                             await stream.CopyToAsync(file, ct);
                         }
@@ -128,11 +128,17 @@ internal sealed partial class WebhookReceivedEventHandler(
                         if (isGitHubArtifact && isZip && req.ShouldSkipZipExtraction() &&
                             !TryValidateRetainedZipCentralDirectory(stagingPath, artifact.FileName, out string validationError))
                         {
-                            TryDeleteFile(stagingPath);
+                            TryDeleteStagingFile(stagingPath, absolutePath, hookCfg.RootDirectory);
                             stagingPath = null;
                             retainedZipInvalid = true;
                             result.RecordArtifactFailure(validationError);
                             continue;
+                        }
+
+                        if (!IsStagingFilePath(Path.GetFullPath(stagingPath), hookCfg.RootDirectory))
+                        {
+                            throw new IOException(
+                                "Refusing to publish a staging file that overlaps an existing artifact.");
                         }
 
                         File.Move(stagingPath, absolutePath, overwrite: true);
@@ -171,12 +177,12 @@ internal sealed partial class WebhookReceivedEventHandler(
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
-                        TryDeleteFile(stagingPath);
+                        TryDeleteStagingFile(stagingPath, absolutePath, hookCfg.RootDirectory);
                         throw;
                     }
                     catch (Exception ex)
                     {
-                        TryDeleteFile(stagingPath);
+                        TryDeleteStagingFile(stagingPath, absolutePath, hookCfg.RootDirectory);
                         logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
                         result.RecordArtifactFailure($"Failed to copy {artifact.FileName} to disk: {ex.Message}");
                     }
@@ -825,6 +831,89 @@ internal sealed partial class WebhookReceivedEventHandler(
             ArrayPool<byte>.Shared.Return(buffer);
         }
     }
+
+    private static string AllocateStagingPath(string destinationPath, string publishedRoot)
+    {
+        string rootFull = Path.GetFullPath(publishedRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string destinationFull = Path.GetFullPath(destinationPath);
+        string stagingDirectory = Path.Combine(rootFull, ".avar-staging");
+        string stagingPath = Path.GetFullPath(Path.Combine(stagingDirectory, Guid.NewGuid().ToString("N") + ".incoming"));
+        if (!IsStagingFilePath(stagingPath, rootFull) ||
+            string.Equals(stagingPath, destinationFull, PathComparison))
+        {
+            throw new IOException("Staging path overlaps a published artifact.");
+        }
+
+        Directory.CreateDirectory(stagingDirectory);
+        return stagingPath;
+    }
+
+    private static void TryDeleteStagingFile(string stagingPath, string destinationPath, string publishedRoot)
+    {
+        if (string.IsNullOrWhiteSpace(stagingPath))
+        {
+            return;
+        }
+
+        try
+        {
+            string fullStaging = Path.GetFullPath(stagingPath);
+            bool isDestination = !string.IsNullOrWhiteSpace(destinationPath) &&
+                                 string.Equals(fullStaging, Path.GetFullPath(destinationPath), PathComparison);
+            if (!IsStagingFilePath(fullStaging, publishedRoot) || isDestination)
+            {
+                return;
+            }
+
+            if (File.Exists(fullStaging))
+            {
+                File.Delete(fullStaging);
+            }
+        }
+        catch
+        {
+            // best-effort cleanup of the download staging file
+        }
+    }
+
+    private static bool IsStagingFilePath(string fullStagingPath, string publishedRoot)
+    {
+        if (string.IsNullOrWhiteSpace(publishedRoot))
+        {
+            return false;
+        }
+
+        string rootFull = Path.GetFullPath(publishedRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string stagingDirectory = Path.GetFullPath(Path.Combine(rootFull, ".avar-staging"));
+        if (!string.Equals(Path.GetDirectoryName(fullStagingPath), stagingDirectory, PathComparison))
+        {
+            return false;
+        }
+
+        string name = Path.GetFileName(fullStagingPath);
+        const string suffix = ".incoming";
+        if (name.Length != 32 + suffix.Length || !name.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < 32; i++)
+        {
+            char c = name[i];
+            bool hex = c is >= '0' and <= '9' || c is >= 'a' and <= 'f';
+            if (!hex)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
 
     private static void TryDeleteFile(string path)
     {

@@ -98,7 +98,9 @@ public sealed class WebhookReceivedEventHandlerTests
         Assert.False(File.Exists(fixture.ArchivePath));
         Assert.False(File.Exists(fixture.ExtractedExecutablePath));
         Assert.False(Directory.Exists(fixture.LatestPath));
-        Assert.Empty(Directory.EnumerateFiles(fixture.BuildDirectory, "*.incoming", SearchOption.AllDirectories));
+        Assert.Empty(Directory.EnumerateFiles(fixture.RootPath, "*.incoming", SearchOption.AllDirectories));
+        Assert.True(!Directory.Exists(fixture.StagingDirectory) ||
+                    !Directory.EnumerateFileSystemEntries(fixture.StagingDirectory).Any());
         Assert.Contains(
             fixture.Errors,
             message => message.Contains("invalid central directory", StringComparison.OrdinalIgnoreCase));
@@ -117,11 +119,19 @@ public sealed class WebhookReceivedEventHandlerTests
             storeMetaData: false,
             latestSymlinkTemplate: "latest");
         byte[] published = await File.ReadAllBytesAsync(fixture.ArchivePath);
+        string decoyPath = fixture.ArchivePath + ".incoming";
+        byte[] decoy = "published-incoming"u8.ToArray();
+        await File.WriteAllBytesAsync(decoyPath, decoy);
 
         fixture.RecordingHandler.Body = [0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00];
         await fixture.DeliverAsync();
 
         Assert.Equal(published, await File.ReadAllBytesAsync(fixture.ArchivePath));
+        Assert.Equal(decoy, await File.ReadAllBytesAsync(decoyPath));
+        Assert.Equal(Path.GetFullPath(decoyPath), Path.GetFullPath(Assert.Single(
+            Directory.EnumerateFiles(fixture.RootPath, "*.incoming", SearchOption.AllDirectories))));
+        Assert.True(!Directory.Exists(fixture.StagingDirectory) ||
+                    !Directory.EnumerateFileSystemEntries(fixture.StagingDirectory).Any());
         Assert.True(
             fixture.Errors.Any(message => message.Contains("invalid central directory", StringComparison.OrdinalIgnoreCase)),
             string.Join("\n", fixture.Errors));
@@ -130,7 +140,6 @@ public sealed class WebhookReceivedEventHandlerTests
             message => message.Contains(
                 "Skipping latest symlink update because a retained GitHub artifact ZIP failed central-directory validation",
                 StringComparison.Ordinal));
-        Assert.Empty(Directory.EnumerateFiles(fixture.BuildDirectory, "*.incoming", SearchOption.AllDirectories));
     }
 
     [Fact]
@@ -169,6 +178,10 @@ public sealed class WebhookReceivedEventHandlerTests
         public RecordingHandler RecordingHandler { get; }
 
         public AuthenticationHeaderValue? Authorization => RecordingHandler.Authorization;
+
+        public string RootPath => _root;
+
+        public string StagingDirectory => Path.Combine(_root, ".avar-staging");
 
         public string BuildDirectory => Path.Combine(_root, "builds", "MultiPadTester");
 
