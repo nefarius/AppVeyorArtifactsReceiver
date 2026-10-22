@@ -9,6 +9,7 @@ using AppVeyorArtifactsReceiver.Metadata;
 using AppVeyorArtifactsReceiver.Models;
 using AppVeyorArtifactsReceiver.Notifications;
 
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -62,6 +63,77 @@ public sealed class WebhookReceivedEventHandlerTests
     }
 
     [Fact]
+    public async Task Opted_out_valid_zip_is_accepted_when_metadata_is_disabled()
+    {
+        await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
+            "true",
+            storeMetaData: false,
+            latestSymlinkTemplate: "latest");
+
+        Assert.True(File.Exists(fixture.ArchivePath));
+        Assert.False(File.Exists(fixture.ExtractedExecutablePath));
+        Assert.False(File.Exists(fixture.SidecarPath));
+        Assert.DoesNotContain(
+            fixture.Errors,
+            message => message.Contains("invalid central directory", StringComparison.OrdinalIgnoreCase));
+        Assert.True(
+            Directory.Exists(fixture.LatestPath) ||
+            fixture.Errors.Any(message => message.Contains("Failed to create symbolic link", StringComparison.Ordinal)),
+            string.Join(" | ", fixture.Errors));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Opted_out_zip_with_invalid_central_directory_fails_and_does_not_retarget_latest(
+        bool storeMetaData)
+    {
+        byte[] truncatedZip = [0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00];
+        await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
+            "true",
+            body: truncatedZip,
+            storeMetaData: storeMetaData,
+            latestSymlinkTemplate: "latest");
+
+        Assert.False(File.Exists(fixture.ArchivePath));
+        Assert.False(File.Exists(fixture.ExtractedExecutablePath));
+        Assert.False(Directory.Exists(fixture.LatestPath));
+        Assert.Empty(Directory.EnumerateFiles(fixture.BuildDirectory, "*.incoming", SearchOption.AllDirectories));
+        Assert.Contains(
+            fixture.Errors,
+            message => message.Contains("invalid central directory", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            fixture.Errors,
+            message => message.Contains(
+                "Skipping latest symlink update because a retained GitHub artifact ZIP failed central-directory validation",
+                StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Invalid_retained_zip_does_not_replace_a_published_artifact()
+    {
+        await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
+            "true",
+            storeMetaData: false,
+            latestSymlinkTemplate: "latest");
+        byte[] published = await File.ReadAllBytesAsync(fixture.ArchivePath);
+
+        fixture.RecordingHandler.Body = [0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00];
+        await fixture.DeliverAsync();
+
+        Assert.Equal(published, await File.ReadAllBytesAsync(fixture.ArchivePath));
+        Assert.True(
+            fixture.Errors.Any(message => message.Contains("invalid central directory", StringComparison.OrdinalIgnoreCase)),
+            string.Join("\n", fixture.Errors));
+        Assert.Contains(
+            fixture.Errors,
+            message => message.Contains(
+                "Skipping latest symlink update because a retained GitHub artifact ZIP failed central-directory validation",
+                StringComparison.Ordinal));
+        Assert.Empty(Directory.EnumerateFiles(fixture.BuildDirectory, "*.incoming", SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public async Task Token_bearing_non_zip_stays_a_loose_file()
     {
         byte[] body = "plain-text"u8.ToArray();
@@ -76,9 +148,21 @@ public sealed class WebhookReceivedEventHandlerTests
     {
         private readonly string _root;
 
-        private HandlerFixture(string root, RecordingHandler handler)
+        private readonly WebhookReceivedEventHandler _handler;
+        private readonly Guid _webhookId;
+        private readonly Dictionary<string, string> _environment;
+
+        private HandlerFixture(
+            string root,
+            RecordingHandler handler,
+            WebhookReceivedEventHandler eventHandler,
+            Guid webhookId,
+            Dictionary<string, string> environment)
         {
             _root = root;
+            _handler = eventHandler;
+            _webhookId = webhookId;
+            _environment = environment;
             RecordingHandler = handler;
         }
 
@@ -94,16 +178,21 @@ public sealed class WebhookReceivedEventHandlerTests
 
         public string SidecarPath => Path.Combine(BuildDirectory, ".MultiPadTester", ".MultiPadTester.exe.json");
 
+        public string LatestPath => Path.Combine(_root, "latest");
+
+        public IReadOnlyList<string> Errors => RecordingHandler.Logger.Errors;
+
         public static async Task<HandlerFixture> CreateAsync(
             string? skipZipExtraction,
             string? gitHubToken = "ci-token",
-            byte[]? body = null)
+            byte[]? body = null,
+            bool storeMetaData = true,
+            string? latestSymlinkTemplate = null)
         {
             string root = Path.Combine(Path.GetTempPath(), "avar-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
             byte[] payload = body ?? CreateZip(GetVersionedPeBytes());
             RecordingHandler recordingHandler = new(payload);
-            HandlerFixture fixture = new(root, recordingHandler);
 
             Guid webhookId = Guid.NewGuid();
             ServiceConfig config = new()
@@ -114,7 +203,8 @@ public sealed class WebhookReceivedEventHandlerTests
                     {
                         RootDirectory = root,
                         TargetPathTemplate = "builds/{appveyor_project_name}",
-                        StoreMetaData = true
+                        LatestSymlinkTemplate = latestSymlinkTemplate,
+                        StoreMetaData = storeMetaData
                     }
                 }
             };
@@ -129,7 +219,7 @@ public sealed class WebhookReceivedEventHandlerTests
             }
 
             WebhookReceivedEventHandler handler = new(
-                NullLogger<WebhookReceivedEventHandler>.Instance,
+                recordingHandler.Logger,
                 new StaticOptions(config),
                 new SingleClientFactory(recordingHandler),
                 new DiscordWebhookNotifier(
@@ -137,10 +227,22 @@ public sealed class WebhookReceivedEventHandlerTests
                     NullLogger<DiscordWebhookNotifier>.Instance),
                 new UnusedMsiReader());
 
-            await handler.HandleAsync(new WebhookRequest
+            HandlerFixture fixture = new(root, recordingHandler, handler, webhookId, environment)
             {
-                Id = webhookId,
-                GitHubToken = gitHubToken,
+                GitHubToken = gitHubToken
+            };
+            await fixture.DeliverAsync();
+            return fixture;
+        }
+
+        public string? GitHubToken { get; init; }
+
+        public Task DeliverAsync()
+        {
+            return _handler.HandleAsync(new WebhookRequest
+            {
+                Id = _webhookId,
+                GitHubToken = GitHubToken,
                 Artifacts =
                 [
                     new Artifact
@@ -149,10 +251,8 @@ public sealed class WebhookReceivedEventHandlerTests
                         Url = "https://example.test/artifact.zip"
                     }
                 ],
-                EnvironmentVariables = environment
+                EnvironmentVariables = _environment
             }, CancellationToken.None);
-
-            return fixture;
         }
 
         public ValueTask DisposeAsync()
@@ -193,6 +293,10 @@ public sealed class WebhookReceivedEventHandlerTests
 
     private sealed class RecordingHandler(byte[] body) : HttpMessageHandler
     {
+        public byte[] Body { get; set; } = body;
+
+        public ListLogger Logger { get; } = new();
+
         public AuthenticationHeaderValue? Authorization { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
@@ -202,18 +306,59 @@ public sealed class WebhookReceivedEventHandlerTests
             Authorization = request.Headers.Authorization;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new ByteArrayContent(body)
+                Content = new ByteArrayContent(Body)
             });
+        }
+    }
+
+    private sealed class ListLogger : ILogger<WebhookReceivedEventHandler>
+    {
+        public List<string> Errors { get; } = [];
+
+        public IDisposable BeginScope<TState>(TState state) where TState : notnull
+        {
+            return NullScope.Instance;
+        }
+
+        public bool IsEnabled(LogLevel logLevel)
+        {
+            return true;
+        }
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Error)
+            {
+                string message = formatter(state, exception);
+                if (exception != null)
+                {
+                    message += $" :: {exception.GetType().Name}: {exception.Message}";
+                }
+
+                Errors.Add(message);
+            }
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            public static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
+            }
         }
     }
 
     private sealed class SingleClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
-        private readonly HttpClient _client = new(handler, disposeHandler: false);
-
         public HttpClient CreateClient(string name)
         {
-            return _client;
+            return new HttpClient(handler, disposeHandler: false);
         }
     }
 

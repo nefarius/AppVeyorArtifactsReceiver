@@ -71,6 +71,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                 }
 
                 Directory.CreateDirectory(absoluteTargetPath);
+                bool retainedZipInvalid = false;
 
                 if (req.Artifacts.Count == 0)
                 {
@@ -92,12 +93,14 @@ internal sealed partial class WebhookReceivedEventHandler(
                         continue;
                     }
 
+                    string stagingPath = null;
                     try
                     {
                         logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
                             artifact.FileName, subDirectory);
 
                         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+                        stagingPath = absolutePath + ".incoming";
 
                         using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
 
@@ -110,17 +113,30 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                         await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
-                        await using (FileStream file = File.Create(absolutePath))
+                        await using (FileStream file = File.Create(stagingPath))
                         {
                             await stream.CopyToAsync(file, ct);
                         }
 
                         bool isGitHubArtifact = !string.IsNullOrEmpty(req.GitHubToken);
                         bool isZip;
-                        await using (FileStream probe = File.OpenRead(absolutePath))
+                        await using (FileStream probe = File.OpenRead(stagingPath))
                         {
                             isZip = IsZipFile(probe);
                         }
+
+                        if (isGitHubArtifact && isZip && req.ShouldSkipZipExtraction() &&
+                            !TryValidateRetainedZipCentralDirectory(stagingPath, artifact.FileName, out string validationError))
+                        {
+                            TryDeleteFile(stagingPath);
+                            stagingPath = null;
+                            retainedZipInvalid = true;
+                            result.RecordArtifactFailure(validationError);
+                            continue;
+                        }
+
+                        File.Move(stagingPath, absolutePath, overwrite: true);
+                        stagingPath = null;
 
                         if (isGitHubArtifact && isZip && req.ShouldSkipZipExtraction())
                         {
@@ -155,10 +171,12 @@ internal sealed partial class WebhookReceivedEventHandler(
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
+                        TryDeleteFile(stagingPath);
                         throw;
                     }
                     catch (Exception ex)
                     {
+                        TryDeleteFile(stagingPath);
                         logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
                         result.RecordArtifactFailure($"Failed to copy {artifact.FileName} to disk: {ex.Message}");
                     }
@@ -169,7 +187,12 @@ internal sealed partial class WebhookReceivedEventHandler(
                 {
                     if (!string.IsNullOrEmpty(hookCfg.LatestSymlinkTemplate))
                     {
-                        if (req.ShouldSkipLatestSymlink())
+                        if (retainedZipInvalid)
+                        {
+                            logger.LogError(
+                                "Skipping latest symlink update because a retained GitHub artifact ZIP failed central-directory validation");
+                        }
+                        else if (req.ShouldSkipLatestSymlink())
                         {
                             logger.LogInformation(
                                 "Skipping latest symlink update because {Key} is true",
@@ -826,6 +849,24 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
 
         return $".{segment}";
+    }
+
+    private bool TryValidateRetainedZipCentralDirectory(string zipAbsolutePath, string artifactFileName, out string error)
+    {
+        try
+        {
+            using ZipArchive archive = ZipFile.OpenRead(zipAbsolutePath);
+            _ = archive.Entries.Count;
+            error = null;
+            return true;
+        }
+        catch (InvalidDataException ex)
+        {
+            logger.LogError(ex, "Retained GitHub artifact ZIP {Zip} has an invalid central directory", zipAbsolutePath);
+            string name = string.IsNullOrWhiteSpace(artifactFileName) ? zipAbsolutePath : artifactFileName;
+            error = $"GitHub artifact ZIP '{name}' has an invalid central directory: {ex.Message}";
+            return false;
+        }
     }
 
     private static bool IsZipFile(FileStream stream)
