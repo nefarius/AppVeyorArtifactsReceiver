@@ -112,6 +112,35 @@ public sealed class WebhookReceivedEventHandlerTests
     }
 
     [Fact]
+    public async Task Opted_out_zip_with_corrupt_entry_data_fails_even_with_a_valid_central_directory()
+    {
+        using MemoryStream stream = new();
+        using (ZipArchive archive = new(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            ZipArchiveEntry entry = archive.CreateEntry("MultiPadTester.exe", CompressionLevel.Optimal);
+            using Stream entryStream = entry.Open();
+            entryStream.Write(new byte[4096]);
+        }
+
+        byte[] body = stream.ToArray();
+        // local header (30) + file name; make the first deflate block an invalid reserved type
+        body[30 + "MultiPadTester.exe".Length] = 0x07;
+
+        await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
+            "true",
+            body: body,
+            storeMetaData: false,
+            latestSymlinkTemplate: "latest");
+
+        Assert.False(File.Exists(fixture.ArchivePath));
+        Assert.False(Directory.Exists(fixture.LatestPath));
+        Assert.True(
+            fixture.Errors.Any(message => message.Contains("invalid central directory or entry data",
+                StringComparison.OrdinalIgnoreCase)),
+            string.Join("\n", fixture.Errors));
+    }
+
+    [Fact]
     public async Task Invalid_retained_zip_does_not_replace_a_published_artifact()
     {
         await using HandlerFixture fixture = await HandlerFixture.CreateAsync(

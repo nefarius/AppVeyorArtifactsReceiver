@@ -945,15 +945,21 @@ internal sealed partial class WebhookReceivedEventHandler(
         try
         {
             using ZipArchive archive = ZipFile.OpenRead(zipAbsolutePath);
-            _ = archive.Entries.Count;
+            foreach (ZipArchiveEntry entry in archive.Entries)
+            {
+                using Stream entryStream = entry.Open();
+                entryStream.CopyTo(Stream.Null);
+            }
+
             error = null;
             return true;
         }
-        catch (InvalidDataException ex)
+        catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException)
         {
-            logger.LogError(ex, "Retained GitHub artifact ZIP {Zip} has an invalid central directory", zipAbsolutePath);
+            logger.LogError(ex, "Retained GitHub artifact ZIP {Zip} has an invalid central directory or entry data",
+                zipAbsolutePath);
             string name = string.IsNullOrWhiteSpace(artifactFileName) ? zipAbsolutePath : artifactFileName;
-            error = $"GitHub artifact ZIP '{name}' has an invalid central directory: {ex.Message}";
+            error = $"GitHub artifact ZIP '{name}' has an invalid central directory or entry data: {ex.Message}";
             return false;
         }
     }
