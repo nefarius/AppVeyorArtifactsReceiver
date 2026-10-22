@@ -40,6 +40,7 @@ internal sealed partial class WebhookReceivedEventHandler(
 {
     private const int DefaultMaxZipEntriesToScan = 8192;
     private const long DefaultMaxZipEntryBytes = 256L * 1024 * 1024;
+    private const long DefaultMaxZipTotalBytes = 2L * 1024 * 1024 * 1024;
 
     public async Task HandleAsync(WebhookRequest req, CancellationToken ct)
     {
@@ -959,6 +960,10 @@ internal sealed partial class WebhookReceivedEventHandler(
         long maxEntryBytes = targetSettings.ZipMaxEntryBytes > 0
             ? targetSettings.ZipMaxEntryBytes
             : DefaultMaxZipEntryBytes;
+        long maxTotalBytes = targetSettings.ZipMaxTotalBytes > 0
+            ? targetSettings.ZipMaxTotalBytes
+            : DefaultMaxZipTotalBytes;
+        long totalBytes = 0;
         string name = string.IsNullOrWhiteSpace(artifactFileName) ? zipAbsolutePath : artifactFileName;
 
         try
@@ -988,9 +993,15 @@ internal sealed partial class WebhookReceivedEventHandler(
                     while ((read = await entryStream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
                     {
                         total += read;
+                        totalBytes += read;
                         if (total > maxEntryBytes)
                         {
                             return $"GitHub artifact ZIP '{name}' entry '{entry.FullName}' exceeds the limit of {maxEntryBytes} bytes";
+                        }
+
+                        if (totalBytes > maxTotalBytes)
+                        {
+                            return $"GitHub artifact ZIP '{name}' exceeds the total uncompressed limit of {maxTotalBytes} bytes";
                         }
 
                         crc = Crc32Update(crc, buffer.AsSpan(0, read));

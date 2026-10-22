@@ -48,6 +48,12 @@ public sealed class TargetSettings
     public long ZipMaxEntryBytes { get; set; }
 
     /// <summary>
+    ///     Maximum total uncompressed size in bytes across all entries when validating a retained GitHub ZIP.
+    ///     Zero uses the built-in default (2 GiB).
+    /// </summary>
+    public long ZipMaxTotalBytes { get; set; }
+
+    /// <summary>
     ///     Optional Discord incoming-webhook URLs that receive one summary after this target finishes
     ///     processing a job. Empty by default. Treat each URL as a secret.
     /// </summary>

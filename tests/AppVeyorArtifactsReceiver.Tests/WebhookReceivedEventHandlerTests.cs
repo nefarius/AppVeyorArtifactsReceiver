@@ -185,6 +185,35 @@ public sealed class WebhookReceivedEventHandlerTests
     }
 
     [Fact]
+    public async Task Opted_out_zip_over_the_total_limit_is_rejected_after_per_entry_checks_pass()
+    {
+        using MemoryStream stream = new();
+        using (ZipArchive archive = new(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            for (int i = 0; i < 3; i++)
+            {
+                ZipArchiveEntry entry = archive.CreateEntry($"part{i}.bin");
+                using Stream entryStream = entry.Open();
+                entryStream.Write(new byte[1000]);
+            }
+        }
+
+        await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
+            "true",
+            body: stream.ToArray(),
+            storeMetaData: false,
+            latestSymlinkTemplate: "latest",
+            zipMaxEntryBytes: 1000,
+            zipMaxTotalBytes: 2500);
+
+        Assert.False(File.Exists(fixture.ArchivePath));
+        Assert.False(Directory.Exists(fixture.LatestPath));
+        Assert.True(
+            fixture.Errors.Any(message => message.Contains("total uncompressed limit", StringComparison.Ordinal)),
+            string.Join("\n", fixture.Errors));
+    }
+
+    [Fact]
     public async Task Invalid_retained_zip_does_not_replace_a_published_artifact()
     {
         await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
@@ -282,7 +311,8 @@ public sealed class WebhookReceivedEventHandlerTests
             byte[]? body = null,
             bool storeMetaData = true,
             string? latestSymlinkTemplate = null,
-            long zipMaxEntryBytes = 0)
+            long zipMaxEntryBytes = 0,
+            long zipMaxTotalBytes = 0)
         {
             string root = Path.Combine(Path.GetTempPath(), "avar-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -300,7 +330,8 @@ public sealed class WebhookReceivedEventHandlerTests
                         TargetPathTemplate = "builds/{appveyor_project_name}",
                         LatestSymlinkTemplate = latestSymlinkTemplate,
                         StoreMetaData = storeMetaData,
-                        ZipMaxEntryBytes = zipMaxEntryBytes
+                        ZipMaxEntryBytes = zipMaxEntryBytes,
+                        ZipMaxTotalBytes = zipMaxTotalBytes
                     }
                 }
             };
