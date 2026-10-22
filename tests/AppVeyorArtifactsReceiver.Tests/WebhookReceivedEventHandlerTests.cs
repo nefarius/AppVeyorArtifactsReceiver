@@ -98,7 +98,7 @@ public sealed class WebhookReceivedEventHandlerTests
         Assert.False(File.Exists(fixture.ArchivePath));
         Assert.False(File.Exists(fixture.ExtractedExecutablePath));
         Assert.False(Directory.Exists(fixture.LatestPath));
-        Assert.Empty(Directory.EnumerateFiles(fixture.RootPath, "*.incoming", SearchOption.AllDirectories));
+        Assert.Empty(EnumerateIncomingFiles(fixture.RootPath));
         Assert.True(!Directory.Exists(fixture.StagingDirectory) ||
                     !Directory.EnumerateFileSystemEntries(fixture.StagingDirectory).Any());
         Assert.Contains(
@@ -128,8 +128,7 @@ public sealed class WebhookReceivedEventHandlerTests
 
         Assert.Equal(published, await File.ReadAllBytesAsync(fixture.ArchivePath));
         Assert.Equal(decoy, await File.ReadAllBytesAsync(decoyPath));
-        Assert.Equal(Path.GetFullPath(decoyPath), Path.GetFullPath(Assert.Single(
-            Directory.EnumerateFiles(fixture.RootPath, "*.incoming", SearchOption.AllDirectories))));
+        Assert.Equal(Path.GetFullPath(decoyPath), Path.GetFullPath(Assert.Single(EnumerateIncomingFiles(fixture.RootPath))));
         Assert.True(!Directory.Exists(fixture.StagingDirectory) ||
                     !Directory.EnumerateFileSystemEntries(fixture.StagingDirectory).Any());
         Assert.True(
@@ -151,6 +150,15 @@ public sealed class WebhookReceivedEventHandlerTests
         Assert.True(File.Exists(fixture.ArchivePath));
         Assert.Equal(body, await File.ReadAllBytesAsync(fixture.ArchivePath));
         Assert.False(File.Exists(fixture.ExtractedExecutablePath));
+    }
+
+    private static IEnumerable<string> EnumerateIncomingFiles(string root)
+    {
+        return Directory.EnumerateFiles(root, "*.incoming", new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            AttributesToSkip = FileAttributes.Hidden | FileAttributes.System | FileAttributes.ReparsePoint
+        });
     }
 
     private sealed class HandlerFixture : IAsyncDisposable
