@@ -63,13 +63,80 @@ public sealed class WebhookRequestTests
         Assert.False(request.ShouldSkipLatestSymlink());
     }
 
+    [Theory]
+    [InlineData("true")]
+    [InlineData("True")]
+    [InlineData("TRUE")]
+    [InlineData(" true ")]
+    public void ShouldSkipZipExtraction_is_true_for_boolean_true_values(string value)
+    {
+        WebhookRequest request = RequestWithEnvironmentValue(
+            WebhookRequest.SkipZipExtractionEnvironmentVariable, value);
+
+        Assert.True(request.ShouldSkipZipExtraction());
+    }
+
+    [Theory]
+    [InlineData("false")]
+    [InlineData("False")]
+    [InlineData("FALSE")]
+    [InlineData(" false ")]
+    public void ShouldSkipZipExtraction_is_false_for_boolean_false_values(string value)
+    {
+        WebhookRequest request = RequestWithEnvironmentValue(
+            WebhookRequest.SkipZipExtractionEnvironmentVariable, value);
+
+        Assert.False(request.ShouldSkipZipExtraction());
+    }
+
+    [Fact]
+    public void ShouldSkipZipExtraction_is_false_when_the_key_is_missing()
+    {
+        WebhookRequest request = new()
+        {
+            EnvironmentVariables = new Dictionary<string, string>
+            {
+                ["appveyor_project_name"] = "DsHidMini"
+            }
+        };
+
+        Assert.False(request.ShouldSkipZipExtraction());
+    }
+
+    [Fact]
+    public void ShouldSkipZipExtraction_is_false_when_environment_variables_are_null()
+    {
+        WebhookRequest request = new();
+
+        Assert.False(request.ShouldSkipZipExtraction());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("1")]
+    [InlineData("yes")]
+    [InlineData("skip")]
+    public void ShouldSkipZipExtraction_is_false_for_malformed_values(string value)
+    {
+        WebhookRequest request = RequestWithEnvironmentValue(
+            WebhookRequest.SkipZipExtractionEnvironmentVariable, value);
+
+        Assert.False(request.ShouldSkipZipExtraction());
+    }
+
     private static WebhookRequest RequestWithSkipValue(string value)
+    {
+        return RequestWithEnvironmentValue(WebhookRequest.SkipLatestSymlinkEnvironmentVariable, value);
+    }
+
+    private static WebhookRequest RequestWithEnvironmentValue(string key, string value)
     {
         return new WebhookRequest
         {
             EnvironmentVariables = new Dictionary<string, string>
             {
-                [WebhookRequest.SkipLatestSymlinkEnvironmentVariable] = value
+                [key] = value
             }
         };
     }

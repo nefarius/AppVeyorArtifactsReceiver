@@ -32,6 +32,13 @@ inputs:
       files but does not retarget the Latest symlink. Must be true or false.
     required: false
     default: 'false'
+  skip-zip-extraction:
+    description: >
+      If true, a GitHub artifact ZIP is downloaded and kept packed so version
+      metadata is scanned inside it. Authentication is unchanged. Must be true
+      or false. AppVeyor ZIPs are never extracted.
+    required: false
+    default: 'false'
   job-label:
     description: >
       Optional label included on Discord summaries so matrix or parallel jobs
@@ -50,6 +57,7 @@ runs:
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
         ARTIFACT_NAME: ${{ inputs.artifact-name }}
         SKIP_LATEST_SYMLINK: ${{ inputs.skip-latest-symlink }}
+        SKIP_ZIP_EXTRACTION: ${{ inputs.skip-zip-extraction }}
         JOB_LABEL: ${{ inputs.job-label }}
       with:
         github-token: ${{ inputs.github-token }}
@@ -58,6 +66,7 @@ runs:
           const token = (process.env.INPUT_GITHUB_TOKEN || '').trim();
           const artifactNameFilter = (process.env.ARTIFACT_NAME || '').trim();
           const skipLatestSymlinkRaw = (process.env.SKIP_LATEST_SYMLINK || '').trim().toLowerCase();
+          const skipZipExtractionRaw = (process.env.SKIP_ZIP_EXTRACTION || '').trim().toLowerCase();
           const jobLabel = (process.env.JOB_LABEL || '').trim();
 
           if (!webhookUrl) {
@@ -75,7 +84,13 @@ runs:
             return;
           }
 
+          if (skipZipExtractionRaw !== 'true' && skipZipExtractionRaw !== 'false') {
+            core.setFailed('Input skip-zip-extraction must be true or false.');
+            return;
+          }
+
           const skipLatestSymlink = skipLatestSymlinkRaw === 'true';
+          const skipZipExtraction = skipZipExtractionRaw === 'true';
 
           const { owner, repo } = context.repo;
           const runId = context.runId;
@@ -150,6 +165,7 @@ runs:
               github_run_attempt: String(process.env.GITHUB_RUN_ATTEMPT || ''),
               github_job: process.env.GITHUB_JOB || context.job || '',
               artifacts_receiver_skip_latest_symlink: skipLatestSymlink ? 'true' : 'false',
+              artifacts_receiver_skip_zip_extraction: skipZipExtraction ? 'true' : 'false',
               artifacts_receiver_job_label: jobLabel
             }
           };

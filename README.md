@@ -21,8 +21,8 @@ Use one receiver for either CI, or both at once (give each provider its own webh
 - **Latest timestamp file** — When `TargetPathTemplate` is set, `LAST_UPDATED_AT.txt` is written in the build directory with the ISO 8601 timestamp when each deployment completes, for APIs or scripts to consume (independent of whether `LatestSymlinkTemplate` is configured).
 - **SVG badge** — `LAST_UPDATED_AT.svg` is generated alongside the timestamp file under the same rules.
 - **Artifact metadata** — When `StoreMetaData` is enabled, hidden sidecar JSON is written for Windows binaries and installer packages. Every sidecar has a `type` discriminator (`pe` today, `msi` for Windows Installer packages, and further values such as `pdb` later) so a parser can tell the formats apart and ignore kinds it does not know. PE sidecars still contain `FileVersion` and `ProductVersion` (for example `.MyApp.exe.json`). MSI sidecars contain `ProductVersion`, `ProductName`, `Manufacturer`, and `ProductCode` (for example `.Setup.msi.json`). This applies to loose files, files unpacked from GitHub artifact zips, and packages found inside AppVeyor zips.
-- **GitHub Actions zip extraction** — Requests that send `X-GitHub-Token` download a zip (`actions/upload-artifact`). The receiver unpacks that zip into the build directory (preserving in-archive paths, zip-slip checked), writes PE and MSI sidecars next to extracted files, and deletes the container zip. Nested zips are left as files. AppVeyor uploads are not unpacked.
-- **ZIP artifact metadata** — If an AppVeyor artifact is itself a ZIP (no GitHub token), PE and MSI metadata is scanned inside the archive without extracting it: entries are scanned up to a configurable limit, oversized entries are skipped, paths are validated (including zip-slip checks), PEs without a typical extension are detected via the MZ header, and MSI packages are detected via the `.msi` extension or OLE compound-file signature. Sidecars are stored under a hidden tree rooted at `.{sanitized_zip_basename}/`, mirroring the in-archive path (each directory segment is stored as a hidden segment; each file gets a `.filename.json` sidecar in the corresponding mirrored folder).
+- **GitHub Actions zip extraction** — Requests that send `X-GitHub-Token` download a zip (`actions/upload-artifact`). The receiver unpacks that zip into the build directory (preserving in-archive paths, zip-slip checked), writes PE and MSI sidecars next to extracted files, and deletes the container zip. Nested zips are left as files. Set `artifacts_receiver_skip_zip_extraction=true` (GitHub Action input `skip-zip-extraction`) to keep that zip packed and scan metadata inside it instead. Missing, `false`, or malformed values keep extraction. AppVeyor uploads are not unpacked.
+- **ZIP artifact metadata** — If an AppVeyor artifact is itself a ZIP (no GitHub token), or a GitHub artifact ZIP whose caller set `artifacts_receiver_skip_zip_extraction=true`, PE and MSI metadata is scanned inside the archive without extracting it: entries are scanned up to a configurable limit, oversized entries are skipped, paths are validated (including zip-slip checks), PEs without a typical extension are detected via the MZ header, and MSI packages are detected via the `.msi` extension or OLE compound-file signature. Sidecars are stored under a hidden tree rooted at `.{sanitized_zip_basename}/`, mirroring the in-archive path (each directory segment is stored as a hidden segment; each file gets a `.filename.json` sidecar in the corresponding mirrored folder).
 - **Discord notifications** — Optional per-webhook Discord incoming-webhook URLs receive one embed after **each** job finishes: green on full success, red on failure or partial artifact failure. The embed includes a Job field (optional `job-label`, GitHub job/run/attempt, or AppVeyor job ids) so messages from the same batch of job runs can be told apart. When `PublicArtifactsBaseUrl` is set, the target folder is a clickable link; GitHub-hosted jobs also link branch and commit. Delivery is best-effort and does not change HTTP acceptance.
 
 ## Quick start
@@ -80,7 +80,7 @@ Once running, the service accepts POSTs with artifact URLs to download. Wire up 
 
 The bundled composite action lists artifacts from the **current** workflow run, builds the payload (including the `github_*` placeholders below), and POSTs it to your receiver.
 
-Store the webhook URL (including the secret GUID path) as `WEBHOOK_URL`. The calling job needs `actions: read`, and you must **upload artifacts before** invoking the action. When artifact URLs are GitHub `archive_download_url` values, the action sends the workflow token in **`X-GitHub-Token`**. The receiver uses it as a Bearer token for the download, **extracts the zip into the build directory** (so a glob such as `bin/*.exe` becomes `…/latest/bin/ControlApp.exe`), and **waits until processing finishes** before responding with `OK`. Use a glob or directory `path:` on `upload-artifact` if you need that prefix; a single-file path is flattened to the zip root.
+Store the webhook URL (including the secret GUID path) as `WEBHOOK_URL`. The calling job needs `actions: read`, and you must **upload artifacts before** invoking the action. When artifact URLs are GitHub `archive_download_url` values, the action sends the workflow token in **`X-GitHub-Token`**. The receiver uses it as a Bearer token for the download, **extracts the zip into the build directory** (so a glob such as `bin/*.exe` becomes `…/latest/bin/ControlApp.exe`), and **waits until processing finishes** before responding with `OK`. Set `skip-zip-extraction: true` to keep the downloaded zip packed and write version metadata inside `.{zip_basename}/` instead. Use a glob or directory `path:` on `upload-artifact` if you need that prefix; a single-file path is flattened to the zip root.
 
 The `artifacts` array may contain **multiple** entries; each is downloaded in turn. Pin `uses:` to a tag or commit in production if you do not want to follow `master`.
 
@@ -161,6 +161,17 @@ To store artifacts without retargeting the `latest` symlink (preview or matrix j
           skip-latest-symlink: true
 ```
 
+To keep a GitHub artifact ZIP packed, set `skip-zip-extraction: true`. The receiver still authenticates the download, leaves `MyApp.zip` in the build directory, and writes sidecars such as `.MyApp/.MyApp.exe.json`. AppVeyor uploads are unaffected. The input must be `true` or `false`; omitted defaults to `false`.
+
+```yml
+      - name: Notify artifacts receiver
+        uses: nefarius/AppVeyorArtifactsReceiver@master
+        with:
+          webhook-url: ${{ secrets.WEBHOOK_URL }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          skip-zip-extraction: true
+```
+
 Parallel or matrix jobs from the same workflow run each produce their own Discord message. Set `job-label` to a value that identifies that copy (GitHub does not expose matrix values automatically):
 
 ```yml
@@ -212,6 +223,7 @@ Settings live under `ServiceConfig:Webhooks` in `appsettings` (see [src/appsetti
 | `StoreMetaData` | Optional; default `true`. Set `false` to skip PE and MSI metadata sidecars for loose files and ZIP contents. |
 | `ZipMaxEntriesToScan` | Optional. Maximum ZIP entries examined per artifact (GitHub Actions extraction and AppVeyor metadata). Use `0` for the built-in default (**8192**). |
 | `ZipMaxEntryBytes` | Optional. Maximum uncompressed size in bytes of a single ZIP entry to extract or load for parsing. Use `0` for the built-in default (**256 MiB**). |
+| `ZipMaxTotalBytes` | Optional. Maximum total uncompressed size in bytes across all entries when validating a retained GitHub ZIP (`skip-zip-extraction`). Use `0` for the built-in default (**2 GiB**). |
 | `DiscordWebhookUrls` | Optional. Array of Discord incoming-webhook URLs for this target. After each job the receiver POSTs one summary embed (project/repository, build, job identity, branch, abbreviated commit, artifact names and counts, target subdirectory, and error details). Every webhook event produces a message; use `job-label` (GitHub Action) or AppVeyor job ids to distinguish parallel jobs from the same run. A job is successful only when processing recorded no error-level failures (empty artifact sets, path escapes, download/copy failures, symlink/timestamp failures, and unhandled exceptions). Warning-only ZIP/PE skips stay non-fatal. Omit or use `[]` to disable. Treat each URL as a secret. |
 | `PublicArtifactsBaseUrl` | Optional. Public HTTP(S) origin that maps to `RootDirectory` (for example `https://artifacts.example.com`). When set, Discord summaries link the target subdirectory under this base. Omit it to keep **only the target path** as plain text. Branch and commit links are generated independently when the job has valid GitHub repository metadata. |
 
@@ -301,7 +313,7 @@ Example (also in [src/appsettings.Production.example.json](src/appsettings.Produ
 
 ## Metadata sidecars
 
-Sidecars are hidden JSON files. A PE named `MyApp.exe` gets `.MyApp.exe.json` in the same directory. An MSI named `Setup.msi` gets `.Setup.msi.json`. Inside an AppVeyor ZIP that is not unpacked, the same file names are mirrored under `.{zip_basename}/`.
+Sidecars are hidden JSON files. A PE named `MyApp.exe` gets `.MyApp.exe.json` in the same directory. An MSI named `Setup.msi` gets `.Setup.msi.json`. Inside a ZIP that is not unpacked — an AppVeyor upload, or a GitHub artifact ZIP with extraction skipped — the same file names are mirrored under `.{zip_basename}/`.
 
 `type` is the format discriminator. Existing PE fields are unchanged apart from this added field:
 

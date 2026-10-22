@@ -40,6 +40,7 @@ internal sealed partial class WebhookReceivedEventHandler(
 {
     private const int DefaultMaxZipEntriesToScan = 8192;
     private const long DefaultMaxZipEntryBytes = 256L * 1024 * 1024;
+    private const long DefaultMaxZipTotalBytes = 2L * 1024 * 1024 * 1024;
 
     public async Task HandleAsync(WebhookRequest req, CancellationToken ct)
     {
@@ -71,6 +72,7 @@ internal sealed partial class WebhookReceivedEventHandler(
                 }
 
                 Directory.CreateDirectory(absoluteTargetPath);
+                bool retainedZipInvalid = false;
 
                 if (req.Artifacts.Count == 0)
                 {
@@ -92,12 +94,14 @@ internal sealed partial class WebhookReceivedEventHandler(
                         continue;
                     }
 
+                    string stagingPath = null;
                     try
                     {
                         logger.LogInformation("Sub-path for artifact {FileName}: {Path}",
                             artifact.FileName, subDirectory);
 
                         Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+                        stagingPath = AllocateStagingPath(absolutePath, hookCfg.RootDirectory);
 
                         using HttpClient httpClient = httpClientFactory.CreateClient("AppVeyor");
 
@@ -110,22 +114,52 @@ internal sealed partial class WebhookReceivedEventHandler(
 
                         await using Stream stream = await httpClient.GetStreamAsync(artifact.Url, ct);
 
-                        await using (FileStream file = File.Create(absolutePath))
+                        await using (FileStream file = new(stagingPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                         {
                             await stream.CopyToAsync(file, ct);
                         }
 
                         bool isGitHubArtifact = !string.IsNullOrEmpty(req.GitHubToken);
                         bool isZip;
-                        await using (FileStream probe = File.OpenRead(absolutePath))
+                        await using (FileStream probe = File.OpenRead(stagingPath))
                         {
                             isZip = IsZipFile(probe);
+                        }
+
+                        string validationError = isGitHubArtifact && isZip && req.ShouldSkipZipExtraction()
+                            ? await ValidateRetainedZipAsync(stagingPath, artifact.FileName, hookCfg, ct)
+                            : null;
+                        if (validationError != null)
+                        {
+                            TryDeleteStagingFile(stagingPath, absolutePath, hookCfg.RootDirectory);
+                            stagingPath = null;
+                            retainedZipInvalid = true;
+                            logger.LogError("Rejecting retained GitHub artifact ZIP: {Reason}", validationError);
+                            result.RecordArtifactFailure(validationError);
+                            continue;
+                        }
+
+                        if (!IsStagingFilePath(Path.GetFullPath(stagingPath), hookCfg.RootDirectory))
+                        {
+                            throw new IOException(
+                                "Refusing to publish a staging file that overlaps an existing artifact.");
+                        }
+
+                        File.Move(stagingPath, absolutePath, overwrite: true);
+                        stagingPath = null;
+
+                        if (isGitHubArtifact && isZip && req.ShouldSkipZipExtraction())
+                        {
+                            logger.LogInformation(
+                                "Keeping GitHub artifact ZIP packed because {Key} is true",
+                                WebhookRequest.SkipZipExtractionEnvironmentVariable);
                         }
 
                         // GitHub Actions artifacts are always a zip. Unpack into the build
                         // directory so in-archive paths (e.g. bin/ControlApp.exe) become public
                         // URLs, then drop the container zip. AppVeyor uploads stay as-is.
-                        if (isGitHubArtifact && isZip)
+                        // artifacts_receiver_skip_zip_extraction keeps a GitHub zip packed.
+                        if (isGitHubArtifact && isZip && !req.ShouldSkipZipExtraction())
                         {
                             await ExtractGitHubZipToTarget(absolutePath, absoluteTargetPath, hookCfg, ct);
                             TryDeleteFile(absolutePath);
@@ -147,10 +181,12 @@ internal sealed partial class WebhookReceivedEventHandler(
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
+                        TryDeleteStagingFile(stagingPath, absolutePath, hookCfg.RootDirectory);
                         throw;
                     }
                     catch (Exception ex)
                     {
+                        TryDeleteStagingFile(stagingPath, absolutePath, hookCfg.RootDirectory);
                         logger.LogError(ex, "Failed to copy {File} to disk", absolutePath);
                         result.RecordArtifactFailure($"Failed to copy {artifact.FileName} to disk: {ex.Message}");
                     }
@@ -161,7 +197,12 @@ internal sealed partial class WebhookReceivedEventHandler(
                 {
                     if (!string.IsNullOrEmpty(hookCfg.LatestSymlinkTemplate))
                     {
-                        if (req.ShouldSkipLatestSymlink())
+                        if (retainedZipInvalid)
+                        {
+                            logger.LogError(
+                                "Skipping latest symlink update because a retained GitHub artifact ZIP failed central-directory validation");
+                        }
+                        else if (req.ShouldSkipLatestSymlink())
                         {
                             logger.LogInformation(
                                 "Skipping latest symlink update because {Key} is true",
@@ -795,6 +836,89 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
     }
 
+    private static string AllocateStagingPath(string destinationPath, string publishedRoot)
+    {
+        string rootFull = Path.GetFullPath(publishedRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string destinationFull = Path.GetFullPath(destinationPath);
+        string stagingDirectory = Path.Combine(rootFull, ".avar-staging");
+        string stagingPath = Path.GetFullPath(Path.Combine(stagingDirectory, Guid.NewGuid().ToString("N") + ".incoming"));
+        if (!IsStagingFilePath(stagingPath, rootFull) ||
+            string.Equals(stagingPath, destinationFull, PathComparison))
+        {
+            throw new IOException("Staging path overlaps a published artifact.");
+        }
+
+        Directory.CreateDirectory(stagingDirectory);
+        return stagingPath;
+    }
+
+    private static void TryDeleteStagingFile(string stagingPath, string destinationPath, string publishedRoot)
+    {
+        if (string.IsNullOrWhiteSpace(stagingPath))
+        {
+            return;
+        }
+
+        try
+        {
+            string fullStaging = Path.GetFullPath(stagingPath);
+            bool isDestination = !string.IsNullOrWhiteSpace(destinationPath) &&
+                                 string.Equals(fullStaging, Path.GetFullPath(destinationPath), PathComparison);
+            if (!IsStagingFilePath(fullStaging, publishedRoot) || isDestination)
+            {
+                return;
+            }
+
+            if (File.Exists(fullStaging))
+            {
+                File.Delete(fullStaging);
+            }
+        }
+        catch
+        {
+            // best-effort cleanup of the download staging file
+        }
+    }
+
+    private static bool IsStagingFilePath(string fullStagingPath, string publishedRoot)
+    {
+        if (string.IsNullOrWhiteSpace(publishedRoot))
+        {
+            return false;
+        }
+
+        string rootFull = Path.GetFullPath(publishedRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string stagingDirectory = Path.GetFullPath(Path.Combine(rootFull, ".avar-staging"));
+        if (!string.Equals(Path.GetDirectoryName(fullStagingPath), stagingDirectory, PathComparison))
+        {
+            return false;
+        }
+
+        string name = Path.GetFileName(fullStagingPath);
+        const string suffix = ".incoming";
+        if (name.Length != 32 + suffix.Length || !name.EndsWith(suffix, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        for (int i = 0; i < 32; i++)
+        {
+            char c = name[i];
+            bool hex = c is >= '0' and <= '9' || c is >= 'a' and <= 'f';
+            if (!hex)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
     private static void TryDeleteFile(string path)
     {
         try
@@ -818,6 +942,119 @@ internal sealed partial class WebhookReceivedEventHandler(
         }
 
         return $".{segment}";
+    }
+
+    /// <summary>
+    ///     Validates a retained ZIP: central directory, entry/size limits, and each entry's data and CRC-32.
+    ///     Returns null when valid, otherwise the failure message.
+    /// </summary>
+    private async Task<string> ValidateRetainedZipAsync(
+        string zipAbsolutePath,
+        string artifactFileName,
+        TargetSettings targetSettings,
+        CancellationToken ct)
+    {
+        int maxEntries = targetSettings.ZipMaxEntriesToScan > 0
+            ? targetSettings.ZipMaxEntriesToScan
+            : DefaultMaxZipEntriesToScan;
+        long maxEntryBytes = targetSettings.ZipMaxEntryBytes > 0
+            ? targetSettings.ZipMaxEntryBytes
+            : DefaultMaxZipEntryBytes;
+        long maxTotalBytes = targetSettings.ZipMaxTotalBytes > 0
+            ? targetSettings.ZipMaxTotalBytes
+            : DefaultMaxZipTotalBytes;
+        long totalBytes = 0;
+        string name = string.IsNullOrWhiteSpace(artifactFileName) ? zipAbsolutePath : artifactFileName;
+
+        try
+        {
+            using ZipArchive archive = ZipFile.OpenRead(zipAbsolutePath);
+            if (archive.Entries.Count > maxEntries)
+            {
+                return $"GitHub artifact ZIP '{name}' has {archive.Entries.Count} entries, more than the limit of {maxEntries}";
+            }
+
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
+            try
+            {
+                foreach (ZipArchiveEntry entry in archive.Entries)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    if (entry.Length > maxEntryBytes)
+                    {
+                        return $"GitHub artifact ZIP '{name}' entry '{entry.FullName}' is {entry.Length} bytes, more than the limit of {maxEntryBytes}";
+                    }
+
+                    uint crc = 0xFFFFFFFFu;
+                    long total = 0;
+                    await using Stream entryStream = entry.Open();
+                    int read;
+                    while ((read = await entryStream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
+                    {
+                        total += read;
+                        totalBytes += read;
+                        if (total > maxEntryBytes)
+                        {
+                            return $"GitHub artifact ZIP '{name}' entry '{entry.FullName}' exceeds the limit of {maxEntryBytes} bytes";
+                        }
+
+                        if (totalBytes > maxTotalBytes)
+                        {
+                            return $"GitHub artifact ZIP '{name}' exceeds the total uncompressed limit of {maxTotalBytes} bytes";
+                        }
+
+                        crc = Crc32Update(crc, buffer.AsSpan(0, read));
+                    }
+
+                    if ((crc ^ 0xFFFFFFFFu) != entry.Crc32)
+                    {
+                        return $"GitHub artifact ZIP '{name}' entry '{entry.FullName}' failed its CRC-32 check";
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            return null;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException)
+        {
+            logger.LogError(ex, "Retained GitHub artifact ZIP {Zip} has an invalid central directory or entry data",
+                zipAbsolutePath);
+            return $"GitHub artifact ZIP '{name}' has an invalid central directory or entry data: {ex.Message}";
+        }
+    }
+
+    private static readonly uint[] Crc32Table = BuildCrc32Table();
+
+    private static uint[] BuildCrc32Table()
+    {
+        uint[] table = new uint[256];
+        for (uint i = 0; i < table.Length; i++)
+        {
+            uint value = i;
+            for (int bit = 0; bit < 8; bit++)
+            {
+                value = (value & 1) != 0 ? (value >> 1) ^ 0xEDB88320u : value >> 1;
+            }
+
+            table[i] = value;
+        }
+
+        return table;
+    }
+
+    private static uint Crc32Update(uint crc, ReadOnlySpan<byte> data)
+    {
+        foreach (byte b in data)
+        {
+            crc = Crc32Table[(crc ^ b) & 0xFF] ^ (crc >> 8);
+        }
+
+        return crc;
     }
 
     private static bool IsZipFile(FileStream stream)
