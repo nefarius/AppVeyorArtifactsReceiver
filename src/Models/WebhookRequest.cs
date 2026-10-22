@@ -1,4 +1,4 @@
-﻿using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 
 using JetBrains.Annotations;
@@ -82,6 +82,12 @@ public sealed class WebhookRequest
     public const string SkipLatestSymlinkEnvironmentVariable = "artifacts_receiver_skip_latest_symlink";
 
     /// <summary>
+    ///     Namespaced <see cref="EnvironmentVariables" /> key that lets the webhook initiator keep a
+    ///     downloaded GitHub artifact ZIP packed. Authentication and synchronous completion stay the same.
+    /// </summary>
+    public const string SkipZipExtractionEnvironmentVariable = "artifacts_receiver_skip_zip_extraction";
+
+    /// <summary>
     ///     Namespaced <see cref="EnvironmentVariables" /> key for an optional caller-supplied label
     ///     that distinguishes Discord summaries from the same batch of job runs (matrix values).
     /// </summary>
@@ -100,6 +106,27 @@ public sealed class WebhookRequest
         }
 
         if (!EnvironmentVariables.TryGetValue(SkipLatestSymlinkEnvironmentVariable, out string value)
+            || string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return bool.TryParse(value.Trim(), out bool skip) && skip;
+    }
+
+    /// <summary>
+    ///     Returns <see langword="true" /> only when <see cref="SkipZipExtractionEnvironmentVariable" />
+    ///     is present and parses as boolean <see langword="true" />. Missing, <see langword="false" />,
+    ///     or malformed values keep the current GitHub ZIP extraction behavior.
+    /// </summary>
+    public bool ShouldSkipZipExtraction()
+    {
+        if (EnvironmentVariables is null)
+        {
+            return false;
+        }
+
+        if (!EnvironmentVariables.TryGetValue(SkipZipExtractionEnvironmentVariable, out string value)
             || string.IsNullOrWhiteSpace(value))
         {
             return false;

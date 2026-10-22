@@ -122,10 +122,18 @@ internal sealed partial class WebhookReceivedEventHandler(
                             isZip = IsZipFile(probe);
                         }
 
+                        if (isGitHubArtifact && isZip && req.ShouldSkipZipExtraction())
+                        {
+                            logger.LogInformation(
+                                "Keeping GitHub artifact ZIP packed because {Key} is true",
+                                WebhookRequest.SkipZipExtractionEnvironmentVariable);
+                        }
+
                         // GitHub Actions artifacts are always a zip. Unpack into the build
                         // directory so in-archive paths (e.g. bin/ControlApp.exe) become public
                         // URLs, then drop the container zip. AppVeyor uploads stay as-is.
-                        if (isGitHubArtifact && isZip)
+                        // artifacts_receiver_skip_zip_extraction keeps a GitHub zip packed.
+                        if (isGitHubArtifact && isZip && !req.ShouldSkipZipExtraction())
                         {
                             await ExtractGitHubZipToTarget(absolutePath, absoluteTargetPath, hookCfg, ct);
                             TryDeleteFile(absolutePath);
