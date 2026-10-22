@@ -125,12 +125,15 @@ internal sealed partial class WebhookReceivedEventHandler(
                             isZip = IsZipFile(probe);
                         }
 
-                        if (isGitHubArtifact && isZip && req.ShouldSkipZipExtraction() &&
-                            !TryValidateRetainedZipCentralDirectory(stagingPath, artifact.FileName, out string validationError))
+                        string validationError = isGitHubArtifact && isZip && req.ShouldSkipZipExtraction()
+                            ? await ValidateRetainedZipAsync(stagingPath, artifact.FileName, hookCfg, ct)
+                            : null;
+                        if (validationError != null)
                         {
                             TryDeleteStagingFile(stagingPath, absolutePath, hookCfg.RootDirectory);
                             stagingPath = null;
                             retainedZipInvalid = true;
+                            logger.LogError("Rejecting retained GitHub artifact ZIP: {Reason}", validationError);
                             result.RecordArtifactFailure(validationError);
                             continue;
                         }
@@ -940,28 +943,107 @@ internal sealed partial class WebhookReceivedEventHandler(
         return $".{segment}";
     }
 
-    private bool TryValidateRetainedZipCentralDirectory(string zipAbsolutePath, string artifactFileName, out string error)
+    /// <summary>
+    ///     Validates a retained ZIP: central directory, entry/size limits, and each entry's data and CRC-32.
+    ///     Returns null when valid, otherwise the failure message.
+    /// </summary>
+    private async Task<string> ValidateRetainedZipAsync(
+        string zipAbsolutePath,
+        string artifactFileName,
+        TargetSettings targetSettings,
+        CancellationToken ct)
     {
+        int maxEntries = targetSettings.ZipMaxEntriesToScan > 0
+            ? targetSettings.ZipMaxEntriesToScan
+            : DefaultMaxZipEntriesToScan;
+        long maxEntryBytes = targetSettings.ZipMaxEntryBytes > 0
+            ? targetSettings.ZipMaxEntryBytes
+            : DefaultMaxZipEntryBytes;
+        string name = string.IsNullOrWhiteSpace(artifactFileName) ? zipAbsolutePath : artifactFileName;
+
         try
         {
             using ZipArchive archive = ZipFile.OpenRead(zipAbsolutePath);
-            foreach (ZipArchiveEntry entry in archive.Entries)
+            if (archive.Entries.Count > maxEntries)
             {
-                using Stream entryStream = entry.Open();
-                entryStream.CopyTo(Stream.Null);
+                return $"GitHub artifact ZIP '{name}' has {archive.Entries.Count} entries, more than the limit of {maxEntries}";
             }
 
-            error = null;
-            return true;
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(81920);
+            try
+            {
+                foreach (ZipArchiveEntry entry in archive.Entries)
+                {
+                    ct.ThrowIfCancellationRequested();
+
+                    if (entry.Length > maxEntryBytes)
+                    {
+                        return $"GitHub artifact ZIP '{name}' entry '{entry.FullName}' is {entry.Length} bytes, more than the limit of {maxEntryBytes}";
+                    }
+
+                    uint crc = 0xFFFFFFFFu;
+                    long total = 0;
+                    await using Stream entryStream = entry.Open();
+                    int read;
+                    while ((read = await entryStream.ReadAsync(buffer.AsMemory(0, buffer.Length), ct)) > 0)
+                    {
+                        total += read;
+                        if (total > maxEntryBytes)
+                        {
+                            return $"GitHub artifact ZIP '{name}' entry '{entry.FullName}' exceeds the limit of {maxEntryBytes} bytes";
+                        }
+
+                        crc = Crc32Update(crc, buffer.AsSpan(0, read));
+                    }
+
+                    if ((crc ^ 0xFFFFFFFFu) != entry.Crc32)
+                    {
+                        return $"GitHub artifact ZIP '{name}' entry '{entry.FullName}' failed its CRC-32 check";
+                    }
+                }
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            return null;
         }
         catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException)
         {
             logger.LogError(ex, "Retained GitHub artifact ZIP {Zip} has an invalid central directory or entry data",
                 zipAbsolutePath);
-            string name = string.IsNullOrWhiteSpace(artifactFileName) ? zipAbsolutePath : artifactFileName;
-            error = $"GitHub artifact ZIP '{name}' has an invalid central directory or entry data: {ex.Message}";
-            return false;
+            return $"GitHub artifact ZIP '{name}' has an invalid central directory or entry data: {ex.Message}";
         }
+    }
+
+    private static readonly uint[] Crc32Table = BuildCrc32Table();
+
+    private static uint[] BuildCrc32Table()
+    {
+        uint[] table = new uint[256];
+        for (uint i = 0; i < table.Length; i++)
+        {
+            uint value = i;
+            for (int bit = 0; bit < 8; bit++)
+            {
+                value = (value & 1) != 0 ? (value >> 1) ^ 0xEDB88320u : value >> 1;
+            }
+
+            table[i] = value;
+        }
+
+        return table;
+    }
+
+    private static uint Crc32Update(uint crc, ReadOnlySpan<byte> data)
+    {
+        foreach (byte b in data)
+        {
+            crc = Crc32Table[(crc ^ b) & 0xFF] ^ (crc >> 8);
+        }
+
+        return crc;
     }
 
     private static bool IsZipFile(FileStream stream)

@@ -141,6 +141,50 @@ public sealed class WebhookReceivedEventHandlerTests
     }
 
     [Fact]
+    public async Task Opted_out_zip_with_altered_entry_data_fails_the_crc_check()
+    {
+        using MemoryStream stream = new();
+        using (ZipArchive archive = new(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            ZipArchiveEntry entry = archive.CreateEntry("MultiPadTester.exe", CompressionLevel.NoCompression);
+            using Stream entryStream = entry.Open();
+            entryStream.Write(new byte[4096]);
+        }
+
+        byte[] body = stream.ToArray();
+        // stored entry: flip one data byte; the archive and decompression stay structurally valid
+        body[30 + "MultiPadTester.exe".Length + 100] ^= 0xFF;
+
+        await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
+            "true",
+            body: body,
+            storeMetaData: false,
+            latestSymlinkTemplate: "latest");
+
+        Assert.False(File.Exists(fixture.ArchivePath));
+        Assert.False(Directory.Exists(fixture.LatestPath));
+        Assert.True(
+            fixture.Errors.Any(message => message.Contains("CRC-32", StringComparison.Ordinal)),
+            string.Join("\n", fixture.Errors));
+    }
+
+    [Fact]
+    public async Task Opted_out_zip_over_the_entry_limit_is_rejected()
+    {
+        await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
+            "true",
+            storeMetaData: false,
+            latestSymlinkTemplate: "latest",
+            zipMaxEntryBytes: 16);
+
+        Assert.False(File.Exists(fixture.ArchivePath));
+        Assert.False(Directory.Exists(fixture.LatestPath));
+        Assert.True(
+            fixture.Errors.Any(message => message.Contains("more than the limit", StringComparison.Ordinal)),
+            string.Join("\n", fixture.Errors));
+    }
+
+    [Fact]
     public async Task Invalid_retained_zip_does_not_replace_a_published_artifact()
     {
         await using HandlerFixture fixture = await HandlerFixture.CreateAsync(
@@ -237,7 +281,8 @@ public sealed class WebhookReceivedEventHandlerTests
             string? gitHubToken = "ci-token",
             byte[]? body = null,
             bool storeMetaData = true,
-            string? latestSymlinkTemplate = null)
+            string? latestSymlinkTemplate = null,
+            long zipMaxEntryBytes = 0)
         {
             string root = Path.Combine(Path.GetTempPath(), "avar-tests", Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(root);
@@ -254,7 +299,8 @@ public sealed class WebhookReceivedEventHandlerTests
                         RootDirectory = root,
                         TargetPathTemplate = "builds/{appveyor_project_name}",
                         LatestSymlinkTemplate = latestSymlinkTemplate,
-                        StoreMetaData = storeMetaData
+                        StoreMetaData = storeMetaData,
+                        ZipMaxEntryBytes = zipMaxEntryBytes
                     }
                 }
             };
